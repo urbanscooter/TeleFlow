@@ -33,23 +33,10 @@ public final class TeleFlowAdFilterService {
     /// Определяет, является ли сообщение спонсированным (рекламным).
     private func isSponsoredMessage(_ message: Message) -> Bool {
         // Спонсированные сообщения имеют специальный атрибут AdMessageAttribute.
-        if let _ = message.attributes.first(where: { attr in
-            attr is AdMessageAttribute
-        }) {
+        // Это единственный надёжный способ определения sponsored messages в TelegramCore.
+        if message.attributes.first(where: { $0 is AdMessageAttribute }) != nil {
             return true
         }
-
-        // Также проверяем по источнику — спонсированные приходят от AdsManager.
-        // В TelegramAPI sponsored messages имеют `flags` с признаком рекламы.
-        // Проверяем наличие флага исходящего (sponsored messages обычно Outgoing или с флагом).
-        if message.flags.contains(.Outgoing) && message.id.namespace == Namespaces.Message.Cloud {
-            // В TelegramCore sponsored messages имеют специфический namespace или атрибут.
-            // Это эвристика — дополнительная проверка через timestamp.
-            if message.timestamp == Int32.max - 1 {
-                return true
-            }
-        }
-
         return false
     }
 
@@ -59,8 +46,6 @@ public final class TeleFlowAdFilterService {
         guard TeleFlowSettings.shared.isHideAdsEnabled else {
             return false
         }
-        // Дополнительная логика: скрывать на основе peerId и messageId.
-        // В реальности это определяется по namespace/id pattern.
         return true
     }
 }

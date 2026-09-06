@@ -56,8 +56,6 @@ public final class TeleFlowSettings {
         set {
             guard newValue != isHideStoriesEnabled else { return }
             userDefaults.set(newValue, forKey: Keys.isHideStoriesEnabled.rawValue)
-            // Дублируем в UserDefaults.standard для модулей, которые не могут импортировать SettingsUI
-            // (например, ChatListHeaderComponent — часть TelegramUI).
             UserDefaults.standard.set(newValue, forKey: "TeleFlow_isHideStoriesEnabled")
             notifyChange()
         }
@@ -104,7 +102,7 @@ public final class TeleFlowSettings {
 public extension TeleFlowSettings {
     /// Signal, эмитирующий текущее значение isAntiDeleteEnabled.
     var antiDeleteEnabledSignal: Signal<Bool, NoError> {
-        return Signal { subscriber in
+        return Signal<Bool, NoError> { subscriber in
             subscriber.putNext(self.isAntiDeleteEnabled)
             let disposable = self.observeChanges {
                 subscriber.putNext(self.isAntiDeleteEnabled)
@@ -112,12 +110,11 @@ public extension TeleFlowSettings {
             return disposable
         }
         |> runOn(.mainQueue())
-        |> `catch` { _ -> Signal<Bool, NoError> in .single(false) }
     }
 
     /// Signal, эмитирующий текущее значение isHideAdsEnabled.
     var hideAdsEnabledSignal: Signal<Bool, NoError> {
-        return Signal { subscriber in
+        return Signal<Bool, NoError> { subscriber in
             subscriber.putNext(self.isHideAdsEnabled)
             let disposable = self.observeChanges {
                 subscriber.putNext(self.isHideAdsEnabled)
@@ -125,12 +122,11 @@ public extension TeleFlowSettings {
             return disposable
         }
         |> runOn(.mainQueue())
-        |> `catch` { _ -> Signal<Bool, NoError> in .single(false) }
     }
 
     /// Signal, эмитирующий текущее значение isHideStoriesEnabled.
     var hideStoriesEnabledSignal: Signal<Bool, NoError> {
-        return Signal { subscriber in
+        return Signal<Bool, NoError> { subscriber in
             subscriber.putNext(self.isHideStoriesEnabled)
             let disposable = self.observeChanges {
                 subscriber.putNext(self.isHideStoriesEnabled)
@@ -138,6 +134,5 @@ public extension TeleFlowSettings {
             return disposable
         }
         |> runOn(.mainQueue())
-        |> `catch` { _ -> Signal<Bool, NoError> in .single(false) }
     }
 }

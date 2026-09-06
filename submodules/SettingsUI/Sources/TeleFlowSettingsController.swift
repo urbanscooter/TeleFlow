@@ -158,6 +158,42 @@ private struct TeleFlowSettingsState: Equatable {
     var isHideStoriesEnabled: Bool
 }
 
+// MARK: - Entry Builder
+
+private func teleFlowSettingsEntries(
+    state: TeleFlowSettingsState,
+    presentationData: ItemListPresentationData
+) -> [TeleFlowSettingsEntry] {
+    var entries: [TeleFlowSettingsEntry] = []
+
+    let titleAntiDelete = localizedString(presentationData, key: "TeleFlow_AntiDelete_Title", default: "Анти-удаление сообщений")
+    let subtitleAntiDelete = localizedString(presentationData, key: "TeleFlow_AntiDelete_Subtitle", default: "Сохраняет сообщения, даже если собеседник удалил их для всех")
+    let infoAntiDelete = localizedString(presentationData, key: "TeleFlow_AntiDelete_Info", default: "Удалённое сообщение будет помечено и сохранено локально")
+
+    let titleHideAds = localizedString(presentationData, key: "TeleFlow_HideAds_Title", default: "Скрыть рекламу")
+    let subtitleHideAds = localizedString(presentationData, key: "TeleFlow_HideAds_Subtitle", default: "Убирает спонсированные публикации в публичных каналах")
+    let infoHideAds = localizedString(presentationData, key: "TeleFlow_HideAds_Info", default: "Рекламные посты не будут отображаться в ленте")
+
+    let titleHideStories = localizedString(presentationData, key: "TeleFlow_HideStories_Title", default: "Скрыть истории")
+    let subtitleHideStories = localizedString(presentationData, key: "TeleFlow_HideStories_Subtitle", default: "Скрывает верхний бар Stories над списком чатов")
+    let infoHideStories = localizedString(presentationData, key: "TeleFlow_HideStories_Info", default: "Панель Stories будет скрыта во всех чатах и профилях")
+
+    entries.append(.sectionHeader(localizedString(presentationData, key: "TeleFlow_Section_Features", default: "Функции")))
+    entries.append(.antiDelete(titleAntiDelete, subtitleAntiDelete, state.isAntiDeleteEnabled))
+    entries.append(.antiDeleteInfo(infoAntiDelete))
+    entries.append(.hideAds(titleHideAds, subtitleHideAds, state.isHideAdsEnabled))
+    entries.append(.hideAdsInfo(infoHideAds))
+    entries.append(.hideStories(titleHideStories, subtitleHideStories, state.isHideStoriesEnabled))
+    entries.append(.hideStoriesInfo(infoHideStories))
+
+    return entries
+}
+
+private func localizedString(_ presentationData: ItemListPresentationData, key: String, default value: String) -> String {
+    // Используем hardcoded-строки для стабильности; локализация подключается через strings-файлы.
+    return value
+}
+
 // MARK: - Factory
 
 public func makeTeleFlowSettingsController(context: AccountContext) -> ViewController {

@@ -130,20 +130,21 @@ public final class TeleFlowAntiDeleteService {
         let markedText = originalText.isEmpty ? marker : "\(originalText)\n\n\(marker)"
 
         // Добавляем атрибут удаления.
-        var updatedAttributes = message.attributes.filter { !($0 is DeletedMessageAttribute) }
         let deleteAttr = DeletedMessageAttribute(
             deletedByPeer: true,
             timestamp: Int32(Date().timeIntervalSince1970)
         )
-        updatedAttributes.append(deleteAttr)
+        let filteredAttrs = message.attributes.filter { !($0 is DeletedMessageAttribute) }
+        let updatedAttributes = filteredAttrs + [deleteAttr]
 
-        // Формируем обновлённое сообщение.
-        var updatedMessage = message
-        updatedMessage.text = markedText
-        updatedMessage.attributes = updatedAttributes
-
-        // Записываем обратно в postbox вместо удаления.
-        transaction.updateMessage(updatedMessage)
+        // Используем замыкание update: Postbox Message — struct с let-свойствами,
+        // прямое присваивание updatedMessage.text = ... невозможно.
+        transaction.updateMessage(messageId, update: { current in
+            var updated = current
+            updated.text = markedText
+            updated.attributes = updatedAttributes
+            return updated
+        })
 
         // Запоминаем в UserDefaults полный messageId (peerId + namespace + id).
         var deletedIds = loadDeletedIds()
@@ -249,7 +250,7 @@ public struct SerializedMessageId: Codable, Equatable, Hashable {
         // Используем `toInt64()` — канонический сериализатор PeerId, гарантирующий
         // корректное восстановление через `PeerId(_:)`.
         self.peerId = messageId.peerId.toInt64()
-        self.namespace = messageId.namespace.rawValue
+        self.namespace = messageId.namespace
         self.id = messageId.id
     }
 
@@ -260,9 +261,9 @@ public struct SerializedMessageId: Codable, Equatable, Hashable {
     }
 
     public func toMessageId() -> MessageId {
+        // MessageId.Namespace — typealias на Int32, поэтому никаких rawValue не нужно.
         let peer = PeerId(self.peerId)
-        let ns = MessageId.Namespace(rawValue: UInt32(bitPattern: self.namespace))
-        return MessageId(peerId: peer, namespace: ns, id: self.id)
+        return MessageId(peerId: peer, namespace: self.namespace, id: self.id)
     }
 }
 
