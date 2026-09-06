@@ -104,7 +104,7 @@ public final class TeleFlowAntiDeleteService {
 
         _ = account.postbox.transaction { transaction -> Void in
             for messageId in messageIds {
-                if let message = transaction.getMessage(messageId) {
+                if transaction.getMessage(messageId) != nil {
                     self.markMessageAsDeleted(messageId: messageId, transaction: transaction)
                 }
             }
@@ -180,10 +180,8 @@ public final class TeleFlowAntiDeleteService {
         return "🗑"
     }
 
-    /// Возвращает текст-маркер `[TeleFlow: Удалено]`.
-    public func deletionMarkerText() -> String {
-        return "[TeleFlow: Удалено]"
-    }
+    /// Текст-маркер `[TeleFlow: Удалено]`.
+    public static let deletionMarkerText: String = "[TeleFlow: Удалено]"
 
     // MARK: - Отключение режима
 
