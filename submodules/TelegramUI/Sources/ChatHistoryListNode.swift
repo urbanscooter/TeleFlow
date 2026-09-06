@@ -916,7 +916,21 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
                         return (10, fakeAdMessages, nil, nil)
                     }
                 } else {
+                    // TeleFlow: фильтрация спонсированных сообщений
+                    // Чтение флага из UserDefaults.standard чтобы избежать циклической зависимости от SettingsUI
                     adMessages = adMessagesContext.state
+                        |> map { (interPostInterval, messages, startDelay, betweenDelay) -> (Int32?, [Message], Int32?, Int32?) in
+                            if UserDefaults.standard.bool(forKey: "TeleFlow_isHideAdsEnabled") {
+                                let filtered = messages.filter { message in
+                                    if let _ = message.attributes.first(where: { $0 is AdMessageAttribute }) {
+                                        return false
+                                    }
+                                    return true
+                                }
+                                return (interPostInterval, filtered, startDelay, betweenDelay)
+                            }
+                            return (interPostInterval, messages, startDelay, betweenDelay)
+                        }
                 }
             }
         } else {

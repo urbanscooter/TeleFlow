@@ -12,6 +12,7 @@ import ItemListPeerItem
 import DeviceAccess
 import TelegramStringFormatting
 import PeerNameColorItem
+import SettingsUI  // для makeTeleFlowSettingsController
 
 enum SettingsSection: Int, CaseIterable {
     case edit
@@ -247,6 +248,11 @@ func settingsItems(data: PeerInfoScreenData?, context: AccountContext, presentat
     let languageName = presentationData.strings.primaryComponent.localizedName
     items[.advanced]!.append(PeerInfoScreenDisclosureItem(id: 4, label: .text(languageName.isEmpty ? presentationData.strings.Localization_LanguageName : languageName), text: presentationData.strings.Settings_AppLanguage, icon: PresentationResourcesSettings.language, action: {
         interaction.openSettings(.language)
+    }))
+
+    // TeleFlow: пункт меню TeleFlow Settings
+    items[.advanced]!.append(PeerInfoScreenDisclosureItem(id: 7, text: "TeleFlow", icon: PresentationResourcesSettings.privacy, action: {
+        interaction.openSettings(.teleFlow)
     }))
     
     let premiumConfiguration = PremiumConfiguration.with(appConfiguration: context.currentAppConfiguration.with { $0 })

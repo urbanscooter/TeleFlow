@@ -11,6 +11,15 @@ private struct EphemeralDeleteMessageRequest {
 }
 
 func _internal_deleteMessagesInteractively(account: Account, messageIds: [MessageId], type: InteractiveMessagesDeletionType, deleteAllInGroup: Bool = false) -> Signal<Void, NoError> {
+    // TeleFlow: уведомление о попытке удаления. TeleFlowAntiDeleteService (SettingsUI)
+    // подписан на это уведомление и при включённом `isAntiDeleteEnabled` сохраняет
+    // сообщения с маркером вместо удаления.
+    NotificationCenter.default.post(
+        name: Notification.Name("TeleFlowMessagesWillBeDeleted"),
+        object: nil,
+        userInfo: ["messageIds": messageIds]
+    )
+
     return account.postbox.transaction { transaction -> [EphemeralDeleteMessageRequest] in
         var ephemeralRequests: [EphemeralDeleteMessageRequest] = []
         for messageId in messageIds where messageId.namespace == Namespaces.Message.EphemeralLocal {

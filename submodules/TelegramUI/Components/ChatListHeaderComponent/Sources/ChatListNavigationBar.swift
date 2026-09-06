@@ -17,6 +17,13 @@ private func searchScrollHeightValue() -> CGFloat {
 }
 
 private func storiesHeightValue() -> CGFloat {
+    // TeleFlow: если включён режим скрытия историй, высота = 0
+    // Используем NotificationCenter чтобы избежать циклической зависимости
+    // от SettingsUI (который зависит от ChatListUI/EntityKeyboard в TelegramUI).
+    let hideStories = UserDefaults.standard.bool(forKey: "TeleFlow_isHideStoriesEnabled")
+    if hideStories {
+        return 0.0
+    }
     return 96.0
 }
 

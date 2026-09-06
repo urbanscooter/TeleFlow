@@ -188,6 +188,8 @@ enum PeerInfoSettingsSection {
     case premiumManagement
     case stars
     case ton
+    // TeleFlow: пункт меню настроек TeleFlow
+    case teleFlow
 }
 
 enum PeerInfoReportType {

@@ -2,108 +2,124 @@ name: CI
 
 on:
   push:
-    branches: [ master ]
-
+    branches: [ master, main ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
-    runs-on: macos-13
+    runs-on: macos-latest
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
         with:
           submodules: 'recursive'
           fetch-depth: '0'
 
+      # 1. Очистка диска раннера от лишних симуляторов
+      - name: Free Disk Space
+        run: |
+          sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/* 2>/dev/null || true
+          df -h
+
+      # 2. Выбор Xcode 26.2
       - name: Set active Xcode path
         run: |
-          XCODE_VERSION=$(cat versions.json | python3 -c 'import json,sys;obj=json.load(sys.stdin);print(obj["xcode"]);')
-          sudo xcode-select -s /Applications/Xcode_$XCODE_VERSION.app/Contents/Developer
+          if [ -d "/Applications/Xcode_26.2.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
+          else
+            echo "Xcode 26.2 not found under standard path, using default latest Xcode"
+            sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          fi
+          xcodebuild -version
 
+      # 3. Кэш скачанных репозиториев/зависимостей Bazel (Network Download Cache)
+      - name: Cache Bazel Repositories (Downloads)
+        uses: actions/cache@v4
+        with:
+          path: /private/var/tmp/bazel_repo_cache
+          key: bazel-repo-cache-${{ runner.os }}-${{ hashFiles('versions.json', 'WORKSPACE', 'submodules/**/BUILD*') }}
+          restore-keys: |
+            bazel-repo-cache-${{ runner.os }}-
+
+      # 4. Кэш скомпилированных артефактов (Compilation Disk Cache)
+      - name: Cache Bazel Disk Cache (Compiled Objects)
+        uses: actions/cache@v4
+        with:
+          path: /private/var/tmp/bazel_disk_cache
+          key: bazel-disk-cache-${{ runner.os }}-${{ hashFiles('versions.json', 'WORKSPACE', 'submodules/**/BUILD*') }}
+          restore-keys: |
+            bazel-disk-cache-${{ runner.os }}-
+
+      # 5. Канонический путь для исходников
       - name: Create canonical source directory
         run: |
           set -x
           sudo mkdir -p /Users/Shared
-          cp -R $GITHUB_WORKSPACE /Users/Shared/
-          mv /Users/Shared/$(basename $GITHUB_WORKSPACE) /Users/Shared/telegram-ios
+          sudo mkdir -p /private/var/tmp/bazel_repo_cache
+          sudo mkdir -p /private/var/tmp/bazel_disk_cache
+          sudo chmod -R 777 /private/var/tmp/bazel_repo_cache /private/var/tmp/bazel_disk_cache
+          cp -R "$GITHUB_WORKSPACE" /Users/Shared/
+          mv /Users/Shared/$(basename "$GITHUB_WORKSPACE") /Users/Shared/telegram-ios
 
+      # 6. Сборка с переиспользованием кэша
       - name: Build the App
         run: |
           set -x
-
-          # source code paths are included in the final binary, so we need to make them stable across builds
           SOURCE_DIR=/Users/Shared/telegram-ios
-
-          # use canonical bazel root
           BAZEL_USER_ROOT="/private/var/tmp/_bazel_containerhost"
+          BAZEL_REPO_CACHE="/private/var/tmp/bazel_repo_cache"
+          BAZEL_DISK_CACHE="/private/var/tmp/bazel_disk_cache"
 
           cd $SOURCE_DIR
 
-          BUILD_NUMBER_OFFSET="$(cat build_number_offset)"
-
-          export APP_VERSION=$(cat versions.json | python3 -c 'import json,sys;obj=json.load(sys.stdin);print(obj["app"]);')
+          BUILD_NUMBER_OFFSET="$(cat build_number_offset 2>/dev/null || echo 0)"
+          export APP_VERSION=$(cat versions.json | python3 -c 'import json,sys;obj=json.load(sys.stdin);print(obj["app"]);' 2>/dev/null || echo "11.0")
           export COMMIT_COUNT=$(git rev-list --count HEAD)
           export COMMIT_COUNT="$(($COMMIT_COUNT+$BUILD_NUMBER_OFFSET))"
           export BUILD_NUMBER="$COMMIT_COUNT"
-          echo "BUILD_NUMBER=$(echo $BUILD_NUMBER)" >> $GITHUB_ENV
-          echo "APP_VERSION=$(echo $APP_VERSION)" >> $GITHUB_ENV
+          
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
+          echo "APP_VERSION=$APP_VERSION" >> $GITHUB_ENV
 
           python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
+
+          # Сборка: прокидываем кэш компиляции и кэш скачиваний
           python3 -u build-system/Make/Make.py \
             --bazelUserRoot="$BAZEL_USER_ROOT" \
+            --overrideBazelArgs="--repository_cache=$BAZEL_REPO_CACHE --disk_cache=$BAZEL_DISK_CACHE" \
             build \
             --configurationPath="build-system/appstore-configuration.json" \
             --codesigningInformationPath=build-system/fake-codesigning \
             --configuration=release_arm64 \
             --buildNumber="$BUILD_NUMBER"
 
-          # collect ipa
           OUTPUT_PATH="build/artifacts"
           rm -rf "$OUTPUT_PATH"
           mkdir -p "$OUTPUT_PATH"
+          
           for f in bazel-out/applebin_ios-ios_arm*-opt-ST-*/bin/Telegram/Telegram.ipa; do
-            cp "$f" $OUTPUT_PATH/
+            if [ -f "$f" ]; then
+              cp "$f" $OUTPUT_PATH/TeleFlow.ipa
+            fi
           done
 
-          # collect dsym
-          mkdir -p build/DSYMs
-          for f in bazel-out/applebin_ios-ios_arm*-opt-ST-*/bin/Telegram/*.dSYM; do
-            cp -R "$f" build/DSYMs/
-          done
-          zip -r "./$OUTPUT_PATH/Telegram.DSYMs.zip" build/DSYMs 1>/dev/null
-
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # 7. Публикация релиза
+      - name: Create Release and Upload IPA
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ env.BUILD_NUMBER }}
-          release_name: Telegram ${{ env.APP_VERSION }} (${{ env.BUILD_NUMBER }})
+          name: TeleFlow ${{ env.APP_VERSION }} (${{ env.BUILD_NUMBER }})
           body: |
-            An unsigned build of Telegram for iOS ${{ env.APP_VERSION }} (${{ env.BUILD_NUMBER }})
+            Сборка TeleFlow iOS:
+            - Меню настроек TeleFlow
+            - Анти-удаление сообщений
+            - Скрытие спонсированных постов
+            - Скрытие историй
           draft: false
           prerelease: false
-
-      - name: Upload Release IPA
-        id: upload-release-ipa 
-        uses: actions/upload-release-asset@v1
+          files: /Users/Shared/telegram-ios/build/artifacts/TeleFlow.ipa
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: /Users/Shared/telegram-ios/build/artifacts/Telegram.ipa
-          asset_name: Telegram.ipa
-          asset_content_type: application/zip
-
-      - name: Upload Release DSYM
-        id: upload-release-dsym 
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: /Users/Shared/telegram-ios/build/artifacts/Telegram.DSYMs.zip
-          asset_name: Telegram.DSYMs.zip
-          asset_content_type: application/zip

@@ -294,6 +294,9 @@ extension PeerInfoScreenNode {
             if let tonContext = self.controller?.tonContext {
                 push(self.context.sharedContext.makeStarsTransactionsScreen(context: self.context, starsContext: tonContext))
             }
+        case .teleFlow:
+            // TeleFlow: переход в экран настроек TeleFlow
+            push(makeTeleFlowSettingsController(context: self.context))
         }
     }
 

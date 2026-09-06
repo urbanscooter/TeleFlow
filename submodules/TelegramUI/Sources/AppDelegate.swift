@@ -337,6 +337,11 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
         defaultNavigationBarImpl = { presentationData in
             return NavigationBarImpl(presentationData: presentationData)
         }
+
+        // TeleFlow: инициализация сервисов при запуске приложения
+        _ = TeleFlowAntiDeleteService.shared
+        _ = TeleFlowAdFilterService.shared
+        _ = TeleFlowStoriesFilterService.shared
         makeContextControllerImpl = { context, presentationData, configuration, recognizer, gesture, workaroundUseLegacyImplementation, disableScreenshots, hideReactionPanelTail in
             return ContextControllerImpl(
                 context: context,
@@ -1233,6 +1238,17 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
                 }
                 |> map { callListSettings -> (AccountContext, CallListSettings)? in
                     if let context = context {
+                        // TeleFlow: уведомляем сервис анти-удаления о готовности AccountContext.
+                        // Делаем на main queue, чтобы сервис мог сразу же начать обработку
+                        // pending-сообщений (если они были поставлены в очередь до этого момента).
+                        let contextForTeleFlow = context
+                        DispatchQueue.main.async {
+                            NotificationCenter.default.post(
+                                name: TeleFlowAntiDeleteService.accountReadyNotification,
+                                object: nil,
+                                userInfo: ["context": contextForTeleFlow]
+                            )
+                        }
                         return (context, callListSettings ?? .defaultSettings)
                     } else {
                         return nil
