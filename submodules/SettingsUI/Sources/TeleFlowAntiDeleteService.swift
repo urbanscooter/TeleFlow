@@ -8,7 +8,7 @@ import AccountContext
 ///
 /// Когда `TeleFlowSettings.shared.isAntiDeleteEnabled == true`, данный модуль перехватывает
 /// события удаления сообщений и отменяет локальное удаление объекта из Postbox-хранилища.
-/// Удалённое сообщение маркируется атрибутом `[TeleFlow: Удалено]` и/или значком 🗑 рядом со временем отправки.
+/// Статус удаления отслеживается через UserDefaults (Set<String>), без кастомного атрибута.
 public final class TeleFlowAntiDeleteService {
 
     /// Shared-инстанс.
@@ -76,9 +76,6 @@ public final class TeleFlowAntiDeleteService {
     }
 
     /// Сохраняет messageIds для отложенной обработки.
-    /// ВАЖНО: сохраняем полную структуру (peerId + namespace + id), чтобы при
-    /// последующем `transaction.getMessage(messageId)` гарантированно получить
-    /// нужный объект из Postbox (а не «мусорный» c peerId: 0).
     private func enqueuePendingDeletions(_ messageIds: [MessageId]) {
         var pending = loadPendingItems()
         for id in messageIds {
@@ -108,86 +105,47 @@ public final class TeleFlowAntiDeleteService {
         _ = account.postbox.transaction { transaction -> Void in
             for messageId in messageIds {
                 if let message = transaction.getMessage(messageId) {
-                    self.markAndPreserveMessage(messageId: messageId, message: message, transaction: transaction)
+                    self.markMessageAsDeleted(messageId: messageId, transaction: transaction)
                 }
             }
         }.start(completed: { [weak self] in
-            // После успешного сохранения очищаем pending.
             self?.clearPendingItems()
         })
     }
 
-    /// Помечает сообщение как удалённое и сохраняет его вместо удаления.
-    private func markAndPreserveMessage(messageId: MessageId, message: Message, transaction: Transaction) {
-        // Не повторно обрабатывать.
-        if message.attributes.contains(where: { $0 is DeletedMessageAttribute }) {
-            return
-        }
-
-        // Добавляем маркер к тексту.
-        let originalText = message.text
-        let marker = TeleFlowAntiDeleteService.deletedMarkerText
-        let markedText = originalText.isEmpty ? marker : "\(originalText)\n\n\(marker)"
-
-        // Добавляем атрибут удаления.
-        let deleteAttr = DeletedMessageAttribute(
-            deletedByPeer: true,
-            timestamp: Int32(Date().timeIntervalSince1970)
-        )
-        let filteredAttrs = message.attributes.filter { !($0 is DeletedMessageAttribute) }
-        let updatedAttributes = filteredAttrs + [deleteAttr]
-
-        // Используем замыкание update: Postbox Message — struct с let-свойствами,
-        // прямое присваивание updatedMessage.text = ... невозможно.
-        transaction.updateMessage(messageId, update: { current in
-            var updated = current
-            updated.text = markedText
-            updated.attributes = updatedAttributes
-            return updated
-        })
+    /// Помечает сообщение как удалённое — записываем ID в UserDefaults.
+    /// Само сообщение НЕ мутируется; визуальный маркер (🗑) отрисовывается
+    /// на уровне UI по ключу из `isMessageMarkedAsDeleted`.
+    private func markMessageAsDeleted(messageId: MessageId, transaction: Transaction) {
+        guard !isMessageMarkedAsDeleted(messageId) else { return }
 
         // Запоминаем в UserDefaults полный messageId (peerId + namespace + id).
         var deletedIds = loadDeletedIds()
-        let item = SerializedMessageId(messageId: messageId)
-        if !deletedIds.contains(item) {
-            deletedIds.append(item)
+        let key = deletedMessageKey(for: messageId)
+        if !deletedIds.contains(key) {
+            deletedIds.insert(key)
             saveDeletedIds(deletedIds)
-        }
-    }
-
-    /// Маркер строки, добавляемый в `text` сообщения при локальном удалении.
-    public static let deletedMarkerText = "[TeleFlow: Удалено]"
-
-    /// Удалённый атрибут сообщения, который добавляется при перехвате удаления.
-    public struct DeletedMessageAttribute: MessageAttribute {
-        public let deletedByPeer: Bool
-        public let timestamp: Int32
-        public let teleFlowDeleted: Bool
-
-        public var associatedMessageIds: [MessageId]? { nil }
-        public var associatedMessages: [MessageId: Message]? { nil }
-
-        public init(deletedByPeer: Bool, timestamp: Int32) {
-            self.deletedByPeer = deletedByPeer
-            self.timestamp = timestamp
-            self.teleFlowDeleted = true
         }
     }
 
     /// Ключ UserDefaults для отслеживания удалённых сообщений.
     private let deletedMessagesKey = "TeleFlow_deletedMessages"
 
-    // MARK: - Хранение маркеров удалённых сообщений
+    // MARK: - Хранение маркеров удалённых сообщений (Set<String>)
 
-    /// ID удалённых сообщений в виде массива `SerializedMessageId`.
-    /// Хранится с полным набором полей: peerId (Int64), namespace (Int32), id (Int32).
-    private func loadDeletedIds() -> [SerializedMessageId] {
-        let data = TeleFlowSettings.shared.userDefaults.object(forKey: deletedMessagesKey) as? Data
-        guard let data else { return [] }
-        return (try? JSONDecoder().decode([SerializedMessageId].self, from: data)) ?? []
+    /// Ключ для сериализации в виде строки "peerId_namespace_id".
+    private func deletedMessageKey(for messageId: MessageId) -> String {
+        return "\(messageId.peerId.toInt64())_\(messageId.namespace)_\(messageId.id)"
     }
 
-    private func saveDeletedIds(_ ids: [SerializedMessageId]) {
+    /// ID удалённых сообщений в виде Set<String>.
+    private func loadDeletedIds() -> Set<String> {
+        let data = TeleFlowSettings.shared.userDefaults.object(forKey: deletedMessagesKey) as? Data
+        guard let data else { return [] }
+        return (try? JSONDecoder().decode(Set<String>.self, from: data)) ?? []
+    }
+
+    private func saveDeletedIds(_ ids: Set<String>) {
         guard let data = try? JSONEncoder().encode(ids) else { return }
         TeleFlowSettings.shared.userDefaults.set(data, forKey: deletedMessagesKey)
     }
@@ -214,16 +172,15 @@ public final class TeleFlowAntiDeleteService {
     /// Возвращает `true`, если сообщение с указанным ID было помечено как удалённое TeleFlow.
     public func isMessageMarkedAsDeleted(_ messageId: MessageId) -> Bool {
         let ids = loadDeletedIds()
-        return ids.contains(SerializedMessageId(messageId: messageId))
+        return ids.contains(deletedMessageKey(for: messageId))
     }
 
     /// Возвращает строку-маркер 🗑 для отображения рядом со временем отправки.
-    /// Используется в ячейках сообщений для визуальной индикации.
     public func deletionMarkerIcon() -> String {
         return "🗑"
     }
 
-    /// Возвращает текст-маркер `[TeleFlow: Удалено]` для отображения в деталях сообщения.
+    /// Возвращает текст-маркер `[TeleFlow: Удалено]`.
     public func deletionMarkerText() -> String {
         return "[TeleFlow: Удалено]"
     }
@@ -247,8 +204,6 @@ public struct SerializedMessageId: Codable, Equatable, Hashable {
     public let id: Int32
 
     public init(messageId: MessageId) {
-        // Используем `toInt64()` — канонический сериализатор PeerId, гарантирующий
-        // корректное восстановление через `PeerId(_:)`.
         self.peerId = messageId.peerId.toInt64()
         self.namespace = messageId.namespace
         self.id = messageId.id
@@ -270,7 +225,6 @@ public struct SerializedMessageId: Codable, Equatable, Hashable {
 // MARK: - Утилита для UI-отображения маркера
 
 /// Проверяет, содержит ли текст сообщения маркер TeleFlow-удаления.
-/// Используется в ячейках чата для определения необходимости показа 🗑.
 public func messageContainsTeleFlowDeletionMarker(_ text: String) -> Bool {
-    return text.contains(TeleFlowAntiDeleteService.deletedMarkerText)
+    return text.contains(TeleFlowAntiDeleteService.deletionMarkerText)
 }

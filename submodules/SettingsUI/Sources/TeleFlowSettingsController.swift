@@ -97,7 +97,7 @@ private enum TeleFlowSettingsEntry: ItemListNodeEntry {
     }
 
     func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
-        let arguments = arguments as! TeleFlowSettingsControllerArguments
+        let controllerArguments = arguments as! TeleFlowSettingsControllerArguments
         switch self {
         case let .sectionHeader(text):
             return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
@@ -111,7 +111,7 @@ private enum TeleFlowSettingsEntry: ItemListNodeEntry {
                 value: value,
                 sectionId: self.section,
                 style: .blocks,
-                updated: { newValue in arguments.toggleAntiDelete(newValue) }
+                updated: { newValue in controllerArguments.toggleAntiDelete(newValue) }
             )
 
         case let .antiDeleteInfo(text):
@@ -126,7 +126,7 @@ private enum TeleFlowSettingsEntry: ItemListNodeEntry {
                 value: value,
                 sectionId: self.section,
                 style: .blocks,
-                updated: { newValue in arguments.toggleHideAds(newValue) }
+                updated: { newValue in controllerArguments.toggleHideAds(newValue) }
             )
 
         case let .hideAdsInfo(text):
@@ -141,7 +141,7 @@ private enum TeleFlowSettingsEntry: ItemListNodeEntry {
                 value: value,
                 sectionId: self.section,
                 style: .blocks,
-                updated: { newValue in arguments.toggleHideStories(newValue) }
+                updated: { newValue in controllerArguments.toggleHideStories(newValue) }
             )
 
         case let .hideStoriesInfo(text):
@@ -166,19 +166,19 @@ private func teleFlowSettingsEntries(
 ) -> [TeleFlowSettingsEntry] {
     var entries: [TeleFlowSettingsEntry] = []
 
-    let titleAntiDelete = localizedString(presentationData, key: "TeleFlow_AntiDelete_Title", default: "Анти-удаление сообщений")
-    let subtitleAntiDelete = localizedString(presentationData, key: "TeleFlow_AntiDelete_Subtitle", default: "Сохраняет сообщения, даже если собеседник удалил их для всех")
-    let infoAntiDelete = localizedString(presentationData, key: "TeleFlow_AntiDelete_Info", default: "Удалённое сообщение будет помечено и сохранено локально")
+    let titleAntiDelete = "Анти-удаление сообщений"
+    let subtitleAntiDelete = "Сохраняет сообщения, даже если собеседник удалил их для всех"
+    let infoAntiDelete = "Удалённое сообщение будет помечено и сохранено локально"
 
-    let titleHideAds = localizedString(presentationData, key: "TeleFlow_HideAds_Title", default: "Скрыть рекламу")
-    let subtitleHideAds = localizedString(presentationData, key: "TeleFlow_HideAds_Subtitle", default: "Убирает спонсированные публикации в публичных каналах")
-    let infoHideAds = localizedString(presentationData, key: "TeleFlow_HideAds_Info", default: "Рекламные посты не будут отображаться в ленте")
+    let titleHideAds = "Скрыть рекламу"
+    let subtitleHideAds = "Убирает спонсированные публикации в публичных каналах"
+    let infoHideAds = "Рекламные посты не будут отображаться в ленте"
 
-    let titleHideStories = localizedString(presentationData, key: "TeleFlow_HideStories_Title", default: "Скрыть истории")
-    let subtitleHideStories = localizedString(presentationData, key: "TeleFlow_HideStories_Subtitle", default: "Скрывает верхний бар Stories над списком чатов")
-    let infoHideStories = localizedString(presentationData, key: "TeleFlow_HideStories_Info", default: "Панель Stories будет скрыта во всех чатах и профилях")
+    let titleHideStories = "Скрыть истории"
+    let subtitleHideStories = "Скрывает верхний бар Stories над списком чатов"
+    let infoHideStories = "Панель Stories будет скрыта во всех чатах и профилях"
 
-    entries.append(.sectionHeader(localizedString(presentationData, key: "TeleFlow_Section_Features", default: "Функции")))
+    entries.append(.sectionHeader("Функции"))
     entries.append(.antiDelete(titleAntiDelete, subtitleAntiDelete, state.isAntiDeleteEnabled))
     entries.append(.antiDeleteInfo(infoAntiDelete))
     entries.append(.hideAds(titleHideAds, subtitleHideAds, state.isHideAdsEnabled))
@@ -189,16 +189,9 @@ private func teleFlowSettingsEntries(
     return entries
 }
 
-private func localizedString(_ presentationData: ItemListPresentationData, key: String, default value: String) -> String {
-    // Используем hardcoded-строки для стабильности; локализация подключается через strings-файлы.
-    return value
-}
-
 // MARK: - Factory
 
 public func makeTeleFlowSettingsController(context: AccountContext) -> ViewController {
-    var controller: ItemListController?
-
     let stateValue = Atomic<TeleFlowSettingsState>(value: TeleFlowSettingsState(
         isAntiDeleteEnabled: TeleFlowSettings.shared.isAntiDeleteEnabled,
         isHideAdsEnabled: TeleFlowSettings.shared.isHideAdsEnabled,
@@ -227,12 +220,13 @@ public func makeTeleFlowSettingsController(context: AccountContext) -> ViewContr
         }
     )
 
-    let signal = combineLatest(queue: .mainQueue(),
+    let signal: Signal<(ItemListControllerState, (ItemListNodeState, TeleFlowSettingsControllerArguments)), NoError> = combineLatest(queue: .mainQueue(),
         context.sharedContext.presentationData,
         statePromise.get()
     )
-    |> map { presentationData, state -> (ItemListControllerState, (ItemListNodeState, Any)) in
-        let entries = teleFlowSettingsEntries(state: state, presentationData: presentationData)
+    |> map { presentationData, state -> (ItemListControllerState, (ItemListNodeState, TeleFlowSettingsControllerArguments)) in
+        let itemListPresentationData = ItemListPresentationData(presentationData)
+        let entries = teleFlowSettingsEntries(state: state, presentationData: itemListPresentationData)
 
         let controllerState = ItemListControllerState(
             presentationData: ItemListPresentationData(presentationData),
@@ -252,6 +246,6 @@ public func makeTeleFlowSettingsController(context: AccountContext) -> ViewContr
         return (controllerState, (listState, arguments))
     }
 
-    controller = ItemListController(context: context, state: signal)
-    return controller!
+    let controller: ItemListController = ItemListController(context: context, state: signal)
+    return controller
 }
