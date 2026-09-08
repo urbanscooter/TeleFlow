@@ -38,17 +38,17 @@ public final class TeleFlowAntiDeleteService {
         self.queue.async {
             guard self.isEnabled else { return }
 
-            _ = account.postbox.transaction { transaction -> Void in
+            _ = (account.postbox.transaction { transaction -> Void in
                 for messageId in messageIds {
                     if transaction.getMessage(messageId) != nil {
-                        self.markMessageAsDeleted(messageId: messageId, transaction: transaction)
+                        self.markMessageAsDeleted(messageId: messageId)
                     }
                 }
-            } |> start()
+            }).start(next: { _ in })
         }
     }
 
-    private func markMessageAsDeleted(messageId: MessageId, transaction: Transaction) {
+    private func markMessageAsDeleted(messageId: MessageId) {
         let key = self.storageKey(for: messageId)
         if self.deletedMessageIds.contains(key) {
             return
@@ -56,10 +56,6 @@ public final class TeleFlowAntiDeleteService {
 
         self.deletedMessageIds.insert(key)
         self.persistDeletedIds()
-
-        transaction.updateMessage(messageId, update: { current in
-            return .keep
-        })
     }
 
     private func storageKey(for messageId: MessageId) -> String {
