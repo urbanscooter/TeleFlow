@@ -2,112 +2,70 @@ name: CI
 
 on:
   push:
-    branches: [ master, main ]
+    branches: [ main ]
   workflow_dispatch:
-
-permissions:
-  contents: write
 
 jobs:
   build:
     runs-on: macos-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          submodules: 'recursive'
-          fetch-depth: '0'
+          submodules: recursive
 
-      # 1. Очистка диска раннера от лишних данных
-      - name: Free Disk Space
-        run: |
-          sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/* 2>/dev/null || true
-          df -h
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.2.app
 
-      # 2. Выбор версии Xcode
-      - name: Set active Xcode path
-        run: |
-          if [ -d "/Applications/Xcode_26.2.app" ]; then
-            sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
-          else
-            echo "Xcode 26.2 not found under standard path, using default latest Xcode"
-            sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-          fi
-          xcodebuild -version
-
-      # 3. Кэш скомпилированных артефактов Bazel
-      - name: Cache Bazel Disk Cache
-        uses: actions/cache@v4
+      - name: Restore Bazel Disk Cache
+        uses: actions/cache/restore@v4
         with:
           path: /private/var/tmp/bazel_disk_cache
-          key: bazel-disk-cache-${{ runner.os }}-${{ hashFiles('versions.json', 'WORKSPACE', 'submodules/**/BUILD*') }}
+          key: bazel-cache-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
-            bazel-disk-cache-${{ runner.os }}-
+            bazel-cache-${{ runner.os }}-
 
-      # 4. Создание рабочей директории
-      - name: Create canonical source directory
+      - name: Setup codesigning keychain
         run: |
-          set -x
-          sudo mkdir -p /Users/Shared
-          sudo mkdir -p /private/var/tmp/bazel_disk_cache
-          sudo chmod -R 777 /private/var/tmp/bazel_disk_cache
-          cp -R "$GITHUB_WORKSPACE" /Users/Shared/
-          mv /Users/Shared/$(basename "$GITHUB_WORKSPACE") /Users/Shared/telegram-ios
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+          security set-keychain-settings -lut 21600 build.keychain
+          security import build-system/fake-codesigning/certs/SelfSigned.p12 -k build.keychain -P "" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
 
-      # 5. Сборка приложения
+      - name: Patch PeerInfoSettingsItems icon
+        run: |
+          sed -i '' 's/PresentationResourcesSettings.privacy/nil/g' submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
+
       - name: Build the App
         run: |
-          set -x
-          SOURCE_DIR=/Users/Shared/telegram-ios
-          BAZEL_USER_ROOT="/private/var/tmp/_bazel_containerhost"
-          BAZEL_DISK_CACHE="/private/var/tmp/bazel_disk_cache"
-
-          cd $SOURCE_DIR
-
-          BUILD_NUMBER_OFFSET="$(cat build_number_offset 2>/dev/null || echo 0)"
-          export APP_VERSION=$(cat versions.json | python3 -c 'import json,sys;obj=json.load(sys.stdin);print(obj["app"]);' 2>/dev/null || echo "11.0")
-          export COMMIT_COUNT=$(git rev-list --count HEAD)
-          export COMMIT_COUNT="$(($COMMIT_COUNT+$BUILD_NUMBER_OFFSET))"
-          export BUILD_NUMBER="$COMMIT_COUNT"
-
-          echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
-          echo "APP_VERSION=$APP_VERSION" >> $GITHUB_ENV
-
-          python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
-
-          python3 -u build-system/Make/Make.py \
-            --bazelUserRoot="$BAZEL_USER_ROOT" \
-            --cacheDir="$BAZEL_DISK_CACHE" \
+          python3 build-system/Make/Make.py \
+            --bazel-path=build-input/bazel-8.4.2-darwin-arm64 \
             build \
-            --configurationPath="build-system/appstore-configuration.json" \
-            --codesigningInformationPath=build-system/fake-codesigning \
-            --configuration=release_arm64 \
-            --buildNumber="$BUILD_NUMBER"
+            --configurationPath=build-system/template_minimal_development_configuration.json \
+            --codesigningInformationPath=build-system/fake-codesigning
 
-          OUTPUT_PATH="build/artifacts"
-          rm -rf "$OUTPUT_PATH"
-          mkdir -p "$OUTPUT_PATH"
+      - name: Save Bazel Disk Cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: /private/var/tmp/bazel_disk_cache
+          key: bazel-cache-${{ runner.os }}-${{ github.run_id }}
 
-          for f in bazel-out/applebin_ios-ios_arm*-opt-ST-*/bin/Telegram/Telegram.ipa; do
-            if [ -f "$f" ]; then
-              cp "$f" $OUTPUT_PATH/TeleFlow.ipa
-            fi
-          done
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          cp -R bazel-out/applebin_ios-ios_arm64-opt-ST-*/bin/Telegram/Telegram.app Payload/
+          zip -qr TeleFlow.ipa Payload
 
-      # 6. Публикация IPA-артефакта в релизы
       - name: Create Release and Upload IPA
         uses: softprops/action-gh-release@v2
+        if: success()
         with:
-          tag_name: build-${{ env.BUILD_NUMBER }}
-          name: TeleFlow ${{ env.APP_VERSION }} (${{ env.BUILD_NUMBER }})
-          body: |
-            Сборка TeleFlow iOS:
-            - Меню настроек TeleFlow
-            - Анти-удаление сообщений
-            - Скрытие рекламы
-            - Скрытие историй
-          draft: false
-          prerelease: false
-          files: /Users/Shared/telegram-ios/build/artifacts/TeleFlow.ipa
+          tag_name: v1.0.${{ github.run_number }}
+          name: TeleFlow v1.0.${{ github.run_number }}
+          files: TeleFlow.ipa
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
