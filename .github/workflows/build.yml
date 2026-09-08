@@ -42,7 +42,7 @@ jobs:
       - name: Build the App
         run: |
           python3 build-system/Make/Make.py \
-            --bazel-path=build-input/bazel-8.4.2-darwin-arm64 \
+            --bazel=build-input/bazel-8.4.2-darwin-arm64 \
             build \
             --buildNumber=${{ github.run_number }} \
             --configuration=release_arm64 \
