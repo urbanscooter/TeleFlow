@@ -44,6 +44,8 @@ jobs:
           python3 build-system/Make/Make.py \
             --bazel-path=build-input/bazel-8.4.2-darwin-arm64 \
             build \
+            --buildNumber=${{ github.run_number }} \
+            --configuration=release_arm64 \
             --configurationPath=build-system/template_minimal_development_configuration.json \
             --codesigningInformationPath=build-system/fake-codesigning
 
