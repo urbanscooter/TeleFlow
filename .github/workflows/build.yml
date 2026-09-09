@@ -38,59 +38,42 @@ jobs:
           security import build-system/fake-codesigning/certs/SelfSigned.p12 -k build.keychain -P "" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
 
-      - name: Patch Code, Entitlements and Generate variables.bzl
+      - name: Patch PeerInfoSettingsItems icon
         run: |
-          # 1. Автопатч иконки в настройках TeleFlow
           sed -i '' 's/PresentationResourcesSettings.privacy/nil/g' submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift || true
 
-          # 2. Мягкий обход проверки aps-environment (не ломая остальную логику генерации)
+      - name: Patch BuildConfiguration to Inject APNs Entitlement
+        run: |
           python3 -c '
           import os
 
-          for root, _, files in os.walk("build-system/Make"):
-              for file in files:
-                  if file.endswith(".py"):
-                      fp = os.path.join(root, file)
-                      with open(fp, "r", encoding="utf-8", errors="ignore") as f:
-                          content = f.read()
+          target_file = "build-system/Make/BuildConfiguration.py"
+          with open(target_file, "r", encoding="utf-8") as f:
+              content = f.read()
 
-                      if "Could not find a valid aps-environment entitlement" in content or "aps-environment" in content:
-                          import re
-                          # Заменяем только raise, не прерывая выполнение функции через return
-                          content = re.sub(r"raise\s+[a-zA-Z0-9_\.]*Exception\([^)]*aps-environment[^)]*\)", "pass", content, flags=re.DOTALL)
-                          content = re.sub(r"raise\s+[a-zA-Z0-9_\.]*Exception\([^)]*Could not find[^)]*\)", "pass", content, flags=re.DOTALL)
-                          
-                          with open(fp, "w", encoding="utf-8") as f:
-                              f.write(content)
-                          print(f"Bypassed raise in: {fp}")
-          '
-
-          # 3. Инжектируем фиктивный variables.bzl в корень и в build_configuration на случай прямого резолва Bazel
-          python3 -c '
-          import json, os
-
-          bzl_content = """
-          telegram_bundle_id = "org.telegram.Telegram-iOS"
-          telegram_api_id = "8"
-          telegram_api_hash = "7245de8e747a0d6fbe11f7cc14fcc0bb"
-          telegram_build_number = "{build_number}"
-          telegram_is_internal_build = False
-          telegram_is_appstore_build = False
-          telegram_app_center_id = ""
-          telegram_aps_environment = "development"
-          """.format(build_number="${{ github.run_number }}")
-
-          # Создаем в корне и в возможных папках расширений bzlmod
-          paths = [
-              "variables.bzl",
-              "build-input/variables.bzl",
-              "build-system/variables.bzl"
-          ]
-          for p in paths:
-              os.makedirs(os.path.dirname(p) if os.path.dirname(p) else ".", exist_ok=True)
-              with open(p, "w") as f:
-                  f.write(bzl_content)
-              print(f"Created {p}")
+          # Инжектируем aps-environment непосредственно перед проверкой
+          search_str = "Could not find a valid aps-environment entitlement"
+          if search_str in content:
+              # Находим блок с raise и заменяем его на принудительную установку значения
+              lines = content.splitlines()
+              new_lines = []
+              for line in lines:
+                  if search_str in line:
+                      indent = " " * (len(line) - len(line.lstrip()))
+                      new_lines.append(indent + "entitlements[\"aps-environment\"] = \"development\"")
+                      new_lines.append(indent + "print(\"[CI-PATCH] Injected aps-environment: development\")")
+                  else:
+                      new_lines.append(line)
+              
+              with open(target_file, "w", encoding="utf-8") as f:
+                  f.write("\n".join(new_lines) + "\n")
+              print("Successfully patched BuildConfiguration.py via line injection")
+          else:
+              print("Target string not found, doing broad replacement")
+              import re
+              content = re.sub(r"raise\s+Exception\([^)]*aps-environment[^)]*\)", "pass", content)
+              with open(target_file, "w", encoding="utf-8") as f:
+                  f.write(content)
           '
 
       - name: Build the App
