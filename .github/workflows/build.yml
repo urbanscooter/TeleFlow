@@ -38,12 +38,12 @@ jobs:
           security import build-system/fake-codesigning/certs/SelfSigned.p12 -k build.keychain -P "" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
 
-      - name: Patch Code and Disable Entitlement Checks
+      - name: Patch Code and Entitlements
         run: |
           # 1. Автопатч иконки в настройках TeleFlow
           sed -i '' 's/PresentationResourcesSettings.privacy/nil/g' submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift || true
 
-          # 2. Нейтрализация проверки aps-environment: заменяем тело метода проверки на заглушку
+          # 2. Нейтрализация проверки aps-environment с корректным return
           python3 -c '
           import os
 
@@ -57,11 +57,11 @@ jobs:
                       new_lines = []
                       patched = False
                       for line in lines:
-                          if "Could not find a valid aps-environment entitlement" in line:
-                              # Превращаем выброс исключения в безобидный лог
+                          if "aps-environment" in line and ("raise" in line or "print(\"APS" in line or "Could not find" in line):
                               indent = len(line) - len(line.lstrip())
-                              new_lines.append(" " * indent + "print(\"APS environment check bypassed successfully\")\n")
+                              new_lines.append(" " * indent + "print(\"Forcing aps-environment to development\")\n")
                               new_lines.append(" " * indent + "aps_environment = \"development\"\n")
+                              new_lines.append(" " * indent + "return \"development\"\n")
                               patched = True
                           else:
                               new_lines.append(line)
@@ -69,20 +69,13 @@ jobs:
                       if patched:
                           with open(fp, "w", encoding="utf-8") as f:
                               f.writelines(new_lines)
-                          print(f"Patched line-by-line: {fp}")
-          '
-
-          # 3. Инжектируем aps-environment во все mobileprovision-файлы fake-codesigning на лету
-          python3 -c '
-          import os, glob
-
-          for prof in glob.glob("build-system/fake-codesigning/profiles/*.mobileprovision"):
-              print(f"Checking profile: {prof}")
+                          print(f"Patched with return: {fp}")
           '
 
       - name: Build the App
         run: |
           python3 build-system/Make/Make.py \
+            --verbose \
             --overrideXcodeVersion \
             build \
             --buildNumber=${{ github.run_number }} \
