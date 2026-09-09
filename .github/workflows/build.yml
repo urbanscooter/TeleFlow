@@ -43,7 +43,7 @@ jobs:
           # 1. Автопатч иконки в настройках TeleFlow
           sed -i '' 's/PresentationResourcesSettings.privacy/nil/g' submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift || true
 
-          # 2. Нейтрализация проверки aps-environment с корректным return
+          # 2. Нейтрализация проверки aps-environment
           python3 -c '
           import os
 
@@ -72,11 +72,12 @@ jobs:
                           print(f"Patched with return: {fp}")
           '
 
-      - name: Generate Build Configuration
+      - name: Generate Project Configuration and Variables
         run: |
+          # generateProject инициализирует все репозитории конфигурации, включая variables.bzl
           python3 build-system/Make/Make.py \
             --overrideXcodeVersion \
-            generate-build-system \
+            generateProject \
             --configurationPath=build-system/template_minimal_development_configuration.json \
             --codesigningInformationPath=build-system/fake-codesigning || true
 
