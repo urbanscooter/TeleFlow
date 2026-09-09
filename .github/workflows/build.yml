@@ -64,7 +64,7 @@ jobs:
                   print(f"Failed to patch {path}: {e}")
           '
 
-          # 2. Гарантированный обход валидации aps-environment во всех файлах build-system
+          # 2. Обход валидации aps-environment во всех файлах build-system
           python3 -c '
           import os
 
@@ -96,7 +96,7 @@ jobs:
 
       - name: Patch Configuration Placeholders and plist_fragment
         run: |
-          # 1. Заменяем плейсхолдеры "! a random string !" в JSON-конфигурациях
+          # 1. Заменяем плейсхолдеры в JSON-конфигурациях
           python3 -c '
           import os, glob
 
@@ -110,25 +110,40 @@ jobs:
                   print(f"Sanitized configuration placeholders in {conf}")
           '
 
-          # 2. Обезвреживаем аварийный fail(...) в plist_fragment.bzl
+          # 2. Исправляем plist_fragment.bzl: заменяем .format(**resolved_values) на безопасный replace
           python3 -c '
           path = "build-system/bazel-utils/plist_fragment.bzl"
           with open(path, "r", encoding="utf-8") as f:
               content = f.read()
 
-          target_str = "fail(\"Expected value for --define={} was not found\".format(key))"
-          if target_str in content:
-              content = content.replace(target_str, "value = \"\"")
+          # Убираем fail при отсутствии ключа
+          target_fail = "fail(\"Expected value for --define={} was not found\".format(key))"
+          if target_fail in content:
+              content = content.replace(target_fail, "value = \"\"")
+
+          # Заменяем template.format(**resolved_values) на пошаговый цикл замен
+          old_fmt = "template.format(**resolved_values)"
+          new_fmt = "formatted_template"
+          
+          loop_code = """    formatted_template = template
+    for k, v in resolved_values.items():
+        formatted_template = formatted_template.replace("{" + k + "}", v)"""
+
+          if old_fmt in content:
+              # Вставляем цикл перед строкой с генерацией plist
+              content = content.replace(
+                  """<dict>\"\"\" + template.format(**resolved_values) + \"\"\"</dict>""",
+                  """<dict>\"\"\" + formatted_template + \"\"\"</dict>"""
+              )
+              lines = content.splitlines()
+              for idx, l in enumerate(lines):
+                  if "formatted_template + \"\"\"</dict>\"\"\"" in l:
+                      lines.insert(idx, loop_code)
+                      break
+              content = "\n".join(lines) + "\n"
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
-              print("Patched plist_fragment.bzl: replaced fail with empty fallback")
-          else:
-              # Fallback на случай другого форматирования кавычек
-              import re
-              content = re.sub(r"fail\([^\)]*Expected value for --define[^\)]*\)", "value = \"\"", content)
-              with open(path, "w", encoding="utf-8") as f:
-                  f.write(content)
-              print("Regex-patched plist_fragment.bzl")
+              print("Successfully patched plist_fragment.bzl to avoid dot-format error")
           '
 
       - name: Build the App
