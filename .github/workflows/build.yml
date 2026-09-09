@@ -18,12 +18,14 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_26.2.app
 
-      - name: Download and prepare Bazel
+      - name: Setup Bazel
         run: |
+          brew install bazelisk
+          sudo ln -sf $(which bazelisk) /usr/local/bin/bazel
           mkdir -p build-input
-          curl -L -o build-input/bazel-8.4.2-darwin-arm64 https://github.com/bazelbuild/bazel/releases/download/8.4.2/bazel-8.4.2-darwin-arm64
+          ln -sf $(which bazelisk) build-input/bazel-8.4.2-darwin-arm64
           chmod +x build-input/bazel-8.4.2-darwin-arm64
-          build-input/bazel-8.4.2-darwin-arm64 --version
+          bazel --version
 
       - name: Restore Bazel Disk Cache
         uses: actions/cache/restore@v4
@@ -48,8 +50,9 @@ jobs:
 
       - name: Build the App
         run: |
+          BAZEL_EXEC="$(pwd)/build-input/bazel-8.4.2-darwin-arm64"
           python3 build-system/Make/Make.py \
-            --bazel=build-input/bazel-8.4.2-darwin-arm64 \
+            --bazel="$BAZEL_EXEC" \
             --overrideBazelVersion \
             --overrideXcodeVersion \
             build \
