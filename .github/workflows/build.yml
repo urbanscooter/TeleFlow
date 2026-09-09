@@ -18,13 +18,18 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_26.2.app
 
-      - name: Setup Bazel 8
+      - name: Install Official Bazel Binary
         run: |
-          brew install bazelisk
-          echo "USE_BAZEL_VERSION=8.4.2" >> $GITHUB_ENV
-          sudo ln -sf $(which bazelisk) /usr/local/bin/bazel
+          # Скачиваем официальный бинарник Bazel 8 (arm64)
+          curl -fL -o bazel-bin https://github.com/bazelbuild/bazel/releases/download/8.0.0/bazel-8.0.0-darwin-arm64
+          chmod +x bazel-bin
+          sudo mv bazel-bin /usr/local/bin/bazel
+          
+          # Проверяем, что выводится строго одна строка с версией
+          /usr/local/bin/bazel --version
+          
           mkdir -p build-input
-          ln -sf $(which bazelisk) build-input/bazel-8.4.2-darwin-arm64
+          cp /usr/local/bin/bazel build-input/bazel-8.4.2-darwin-arm64
           chmod +x build-input/bazel-8.4.2-darwin-arm64
 
       - name: Restore Bazel Disk Cache
@@ -46,7 +51,7 @@ jobs:
 
       - name: Patch Code and BuildConfiguration
         run: |
-          # Патч иконки настроек
+          # Патч сломанной иконки настроек TeleFlow
           sed -i '' 's/PresentationResourcesSettings.privacy/nil/g' submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift || true
           
           # Отключение строгой проверки aps-environment в Make-скриптах
@@ -61,9 +66,7 @@ jobs:
 
       - name: Build the App
         run: |
-          BAZEL_EXEC="$(pwd)/build-input/bazel-8.4.2-darwin-arm64"
           python3 build-system/Make/Make.py \
-            --bazel="$BAZEL_EXEC" \
             --overrideBazelVersion \
             --overrideXcodeVersion \
             build \
