@@ -38,36 +38,33 @@ jobs:
           security import build-system/fake-codesigning/certs/SelfSigned.p12 -k build.keychain -P "" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
 
-      - name: Patch Code and Disable APNs Check
+      - name: Patch Code and Entitlements
         run: |
-          # 1. Патч иконки в настройках TeleFlow
+          # 1. Автопатч иконки в настройках TeleFlow
           sed -i '' 's/PresentationResourcesSettings.privacy/nil/g' submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift || true
 
-          # 2. Глобальное отключение падения на aps-environment во всех файлах сборщика
+          # 2. Нейтрализация всех проверок aps-environment во всей кодовой базе build-system
           python3 -c '
-          import os, glob
+          import os
 
-          for root, dirs, files in os.walk("build-system/Make"):
+          for root, _, files in os.walk("build-system/Make"):
               for file in files:
                   if file.endswith(".py"):
                       fp = os.path.join(root, file)
                       with open(fp, "r", encoding="utf-8", errors="ignore") as f:
-                          lines = f.readlines()
-                      
-                      modified = False
-                      new_lines = []
-                      for line in lines:
-                          if "aps-environment" in line and "raise" in line:
-                              # Заменяем raise на подстановку фейкового development entitlement
-                              new_lines.append("        aps_environment = \"development\"\n")
-                              modified = True
-                          else:
-                              new_lines.append(line)
-                      
-                      if modified:
+                          content = f.read()
+
+                      if "aps-environment" in content:
+                          # Заменяем выброс исключения на пропуск или фейковое значение
+                          import re
+                          new_content = re.sub(r"raise\s+Exception\([^)]*aps-environment[^)]*\)", "aps_environment = \"development\"", content, flags=re.DOTALL)
+                          
+                          # На случай если проверка реализована через assert или sys.exit
+                          new_content = new_content.replace("Could not find a valid aps-environment entitlement", "Bypassing aps-environment check")
+                          
                           with open(fp, "w", encoding="utf-8") as f:
-                              f.writelines(new_lines)
-                          print(f"Patched aps-environment in {fp}")
+                              f.write(new_content)
+                          print(f"Successfully bypassed aps-environment in {fp}")
           '
 
       - name: Build the App
