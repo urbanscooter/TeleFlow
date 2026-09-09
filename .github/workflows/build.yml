@@ -57,7 +57,7 @@ jobs:
             --overrideXcodeVersion \
             build \
             --buildNumber=${{ github.run_number }} \
-            --configuration=release_arm64 \
+            --configuration=debug_arm64 \
             --configurationPath=build-system/template_minimal_development_configuration.json \
             --codesigningInformationPath=build-system/fake-codesigning
 
@@ -71,7 +71,7 @@ jobs:
       - name: Package IPA
         run: |
           mkdir -p Payload
-          cp -R bazel-out/applebin_ios-ios_arm64-opt-ST-*/bin/Telegram/Telegram.app Payload/
+          find bazel-out -name "Telegram.app" -type d -exec cp -R {} Payload/ \;
           zip -qr TeleFlow.ipa Payload
 
       - name: Create Release and Upload IPA
