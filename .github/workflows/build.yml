@@ -18,6 +18,9 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_26.2.app
 
+      - name: Prepare Cache Directory
+        run: mkdir -p /private/var/tmp/bazel_disk_cache
+
       - name: Restore Bazel Disk Cache
         uses: actions/cache/restore@v4
         with:
@@ -35,28 +38,36 @@ jobs:
           security import build-system/fake-codesigning/certs/SelfSigned.p12 -k build.keychain -P "" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
 
-      - name: Patch Code and BuildConfiguration
+      - name: Patch Code and Disable APNs Check
         run: |
-          # 1. Автопатч иконки настроек TeleFlow
+          # 1. Патч иконки в настройках TeleFlow
           sed -i '' 's/PresentationResourcesSettings.privacy/nil/g' submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift || true
 
-          # 2. Нейтрализация проверки aps-environment в Python-скриптах сборки
+          # 2. Глобальное отключение падения на aps-environment во всех файлах сборщика
           python3 -c '
-          import re
+          import os, glob
 
-          for file_path in ["build-system/Make/BuildConfiguration.py", "build-system/Make/Make.py"]:
-              try:
-                  with open(file_path, "r") as f:
-                      data = f.read()
-                  
-                  new_data = re.sub(r"raise Exception\([^)]*aps-environment[^)]*\)", "pass", data)
-                  
-                  if new_data != data:
-                      with open(file_path, "w") as f:
-                          f.write(new_data)
-                      print(f"Patched aps-environment in {file_path}")
-              except Exception as e:
-                  print(f"Skipping {file_path}: {e}")
+          for root, dirs, files in os.walk("build-system/Make"):
+              for file in files:
+                  if file.endswith(".py"):
+                      fp = os.path.join(root, file)
+                      with open(fp, "r", encoding="utf-8", errors="ignore") as f:
+                          lines = f.readlines()
+                      
+                      modified = False
+                      new_lines = []
+                      for line in lines:
+                          if "aps-environment" in line and "raise" in line:
+                              # Заменяем raise на подстановку фейкового development entitlement
+                              new_lines.append("        aps_environment = \"development\"\n")
+                              modified = True
+                          else:
+                              new_lines.append(line)
+                      
+                      if modified:
+                          with open(fp, "w", encoding="utf-8") as f:
+                              f.writelines(new_lines)
+                          print(f"Patched aps-environment in {fp}")
           '
 
       - name: Build the App
