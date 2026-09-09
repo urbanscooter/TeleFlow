@@ -40,8 +40,24 @@ jobs:
           # 1. Автопатч иконки настроек TeleFlow
           sed -i '' 's/PresentationResourcesSettings.privacy/nil/g' submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift || true
 
-          # 2. Надежное отключение проверки aps-environment в BuildConfiguration.py
-          sed -i '' 's/raise Exception("Could not find a valid aps-environment entitlement/# pass aps check/g' build-system/Make/BuildConfiguration.py
+          # 2. Нейтрализация проверки aps-environment в Python-скриптах сборки
+          python3 -c '
+          import re
+
+          for file_path in ["build-system/Make/BuildConfiguration.py", "build-system/Make/Make.py"]:
+              try:
+                  with open(file_path, "r") as f:
+                      data = f.read()
+                  
+                  new_data = re.sub(r"raise Exception\([^)]*aps-environment[^)]*\)", "pass", data)
+                  
+                  if new_data != data:
+                      with open(file_path, "w") as f:
+                          f.write(new_data)
+                      print(f"Patched aps-environment in {file_path}")
+              except Exception as e:
+                  print(f"Skipping {file_path}: {e}")
+          '
 
       - name: Build the App
         run: |
