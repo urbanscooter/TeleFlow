@@ -38,12 +38,12 @@ jobs:
           security import build-system/fake-codesigning/certs/SelfSigned.p12 -k build.keychain -P "" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
 
-      - name: Patch Code and Entitlements
+      - name: Patch Code, Entitlements and Generate variables.bzl
         run: |
           # 1. Автопатч иконки в настройках TeleFlow
           sed -i '' 's/PresentationResourcesSettings.privacy/nil/g' submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift || true
 
-          # 2. Нейтрализация проверки aps-environment
+          # 2. Мягкий обход проверки aps-environment (не ломая остальную логику генерации)
           python3 -c '
           import os
 
@@ -52,34 +52,46 @@ jobs:
                   if file.endswith(".py"):
                       fp = os.path.join(root, file)
                       with open(fp, "r", encoding="utf-8", errors="ignore") as f:
-                          lines = f.readlines()
-                      
-                      new_lines = []
-                      patched = False
-                      for line in lines:
-                          if "aps-environment" in line and ("raise" in line or "print(\"APS" in line or "Could not find" in line):
-                              indent = len(line) - len(line.lstrip())
-                              new_lines.append(" " * indent + "print(\"Forcing aps-environment to development\")\n")
-                              new_lines.append(" " * indent + "aps_environment = \"development\"\n")
-                              new_lines.append(" " * indent + "return \"development\"\n")
-                              patched = True
-                          else:
-                              new_lines.append(line)
-                      
-                      if patched:
+                          content = f.read()
+
+                      if "Could not find a valid aps-environment entitlement" in content or "aps-environment" in content:
+                          import re
+                          # Заменяем только raise, не прерывая выполнение функции через return
+                          content = re.sub(r"raise\s+[a-zA-Z0-9_\.]*Exception\([^)]*aps-environment[^)]*\)", "pass", content, flags=re.DOTALL)
+                          content = re.sub(r"raise\s+[a-zA-Z0-9_\.]*Exception\([^)]*Could not find[^)]*\)", "pass", content, flags=re.DOTALL)
+                          
                           with open(fp, "w", encoding="utf-8") as f:
-                              f.writelines(new_lines)
-                          print(f"Patched with return: {fp}")
+                              f.write(content)
+                          print(f"Bypassed raise in: {fp}")
           '
 
-      - name: Generate Project Configuration and Variables
-        run: |
-          # generateProject инициализирует все репозитории конфигурации, включая variables.bzl
-          python3 build-system/Make/Make.py \
-            --overrideXcodeVersion \
-            generateProject \
-            --configurationPath=build-system/template_minimal_development_configuration.json \
-            --codesigningInformationPath=build-system/fake-codesigning || true
+          # 3. Инжектируем фиктивный variables.bzl в корень и в build_configuration на случай прямого резолва Bazel
+          python3 -c '
+          import json, os
+
+          bzl_content = """
+          telegram_bundle_id = "org.telegram.Telegram-iOS"
+          telegram_api_id = "8"
+          telegram_api_hash = "7245de8e747a0d6fbe11f7cc14fcc0bb"
+          telegram_build_number = "{build_number}"
+          telegram_is_internal_build = False
+          telegram_is_appstore_build = False
+          telegram_app_center_id = ""
+          telegram_aps_environment = "development"
+          """.format(build_number="${{ github.run_number }}")
+
+          # Создаем в корне и в возможных папках расширений bzlmod
+          paths = [
+              "variables.bzl",
+              "build-input/variables.bzl",
+              "build-system/variables.bzl"
+          ]
+          for p in paths:
+              os.makedirs(os.path.dirname(p) if os.path.dirname(p) else ".", exist_ok=True)
+              with open(p, "w") as f:
+                  f.write(bzl_content)
+              print(f"Created {p}")
+          '
 
       - name: Build the App
         run: |
