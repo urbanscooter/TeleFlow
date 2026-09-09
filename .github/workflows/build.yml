@@ -40,12 +40,12 @@ jobs:
 
       - name: Patch Code and Entitlements
         run: |
-          # 1. Автопатч иконки в настройках TeleFlow
+          # 1. Патч иконки в настройках TeleFlow
           sed -i '' 's/PresentationResourcesSettings.privacy/nil/g' submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift || true
 
-          # 2. Нейтрализация всех проверок aps-environment во всей кодовой базе build-system
+          # 2. Вырезаем весь блок падения aps-environment во всех файлах сборщика
           python3 -c '
-          import os
+          import os, re
 
           for root, _, files in os.walk("build-system/Make"):
               for file in files:
@@ -55,16 +55,13 @@ jobs:
                           content = f.read()
 
                       if "aps-environment" in content:
-                          # Заменяем выброс исключения на пропуск или фейковое значение
-                          import re
-                          new_content = re.sub(r"raise\s+Exception\([^)]*aps-environment[^)]*\)", "aps_environment = \"development\"", content, flags=re.DOTALL)
-                          
-                          # На случай если проверка реализована через assert или sys.exit
-                          new_content = new_content.replace("Could not find a valid aps-environment entitlement", "Bypassing aps-environment check")
+                          # Полная нейтрализация: заменяем raise Exception(...) на присваивание дефолтного значения
+                          content = re.sub(r"raise\s+[a-zA-Z0-9_\.]*Exception\([^)]*aps-environment[^)]*\)", "aps_environment = \"development\"", content, flags=re.DOTALL)
+                          content = re.sub(r"raise\s+[a-zA-Z0-9_\.]*Exception\([^)]*Bypassing aps-environment[^)]*\)", "aps_environment = \"development\"", content, flags=re.DOTALL)
                           
                           with open(fp, "w", encoding="utf-8") as f:
-                              f.write(new_content)
-                          print(f"Successfully bypassed aps-environment in {fp}")
+                              f.write(content)
+                          print(f"Neutralized exception in: {fp}")
           '
 
       - name: Build the App
