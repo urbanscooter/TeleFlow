@@ -72,6 +72,14 @@ jobs:
                           print(f"Patched with return: {fp}")
           '
 
+      - name: Generate Build Configuration
+        run: |
+          python3 build-system/Make/Make.py \
+            --overrideXcodeVersion \
+            generate-build-system \
+            --configurationPath=build-system/template_minimal_development_configuration.json \
+            --codesigningInformationPath=build-system/fake-codesigning || true
+
       - name: Build the App
         run: |
           python3 build-system/Make/Make.py \
