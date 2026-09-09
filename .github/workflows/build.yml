@@ -18,6 +18,13 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_26.2.app
 
+      - name: Download and prepare Bazel
+        run: |
+          mkdir -p build-input
+          curl -L -o build-input/bazel-8.4.2-darwin-arm64 https://github.com/bazelbuild/bazel/releases/download/8.4.2/bazel-8.4.2-darwin-arm64
+          chmod +x build-input/bazel-8.4.2-darwin-arm64
+          build-input/bazel-8.4.2-darwin-arm64 --version
+
       - name: Restore Bazel Disk Cache
         uses: actions/cache/restore@v4
         with:
@@ -43,6 +50,8 @@ jobs:
         run: |
           python3 build-system/Make/Make.py \
             --bazel=build-input/bazel-8.4.2-darwin-arm64 \
+            --overrideBazelVersion \
+            --overrideXcodeVersion \
             build \
             --buildNumber=${{ github.run_number }} \
             --configuration=release_arm64 \
