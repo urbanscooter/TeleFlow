@@ -113,46 +113,22 @@ jobs:
           sed -i '' 's/fail("Expected value for --define={}.*/value = ""/g' "$FILE"
           sed -i '' 's/template\.format(\*\*resolved_values)/template/g' "$FILE"
 
-      - name: Fix Provisioning Export Targets in Bazel Rules and Telegram BUILD
+      - name: Redirect All Provisioning Profile Targets
         run: |
-          # 1. Добавляем exports_files во все генерируемые шаблоны BUILD для provisioning
-          python3 -c '
-          import os
-
-          target_snippet = "exports_files(glob([\"*\"]))"
-
-          for root, _, files in os.walk("build-system"):
-              for file in files:
-                  if file.endswith((".py", ".bzl")):
-                      fp = os.path.join(root, file)
-                      try:
-                          with open(fp, "r", encoding="utf-8", errors="ignore") as f:
-                              content = f.read()
-
-                          if "provisioning" in content and "default_visibility" in content:
-                              if target_snippet not in content:
-                                  content = content.replace("default_visibility = [\"//visibility:public\"]", "default_visibility = [\"//visibility:public\"]); exports_files(glob([\"*\"])")
-                                  with open(fp, "w", encoding="utf-8") as f:
-                                      f.write(content)
-                                  print("Injected exports_files in:", fp)
-                      except Exception as e:
-                          pass
-          '
-
-          # 2. Перенаправляем таргет в Telegram/BUILD на локальный файл
-          sed -i '' 's|@@build_configuration+//provisioning:Telegram.mobileprovision|//build-system/fake-codesigning/profiles:Telegram.mobileprovision|g' Telegram/BUILD || true
-          sed -i '' 's|@build_configuration//provisioning:Telegram.mobileprovision|//build-system/fake-codesigning/profiles:Telegram.mobileprovision|g' Telegram/BUILD || true
-
+          # 1. Создаем BUILD-файл в папке fake-codesigning/profiles для экспорта всех профилей
           echo 'exports_files(glob(["*"]))' > build-system/fake-codesigning/profiles/BUILD
+
+          # 2. Перенаправляем ВСЕ ссылки на @@build_configuration+//provisioning: и @build_configuration//provisioning:
+          sed -i '' 's|@@build_configuration+//provisioning:|//build-system/fake-codesigning/profiles:|g' Telegram/BUILD
+          sed -i '' 's|@build_configuration//provisioning:|//build-system/fake-codesigning/profiles:|g' Telegram/BUILD
 
       - name: Configure Bazel Memory Limits
         run: |
-          # Ограничиваем аппетиты Bazel по памяти, чтобы macOS не убивала процесс по OOM
           cat << 'EOF' >> .bazelrc
           startup --host_jvm_args=-Xmx4g
           startup --host_jvm_args=-Xms2g
-          build --local_ram_resources=9216
-          build --local_cpu_resources=3
+          build --local_resources=memory=9216
+          build --local_resources=cpu=3
           build --jobs=3
           EOF
 
