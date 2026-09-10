@@ -92,19 +92,34 @@ jobs:
                           print(f"Patched APNs checker in {fp}")
           '
 
-      - name: Sanitize Configuration Placeholders
+      - name: Sanitize Configuration and Provide Valid API Credentials
         run: |
           python3 -c '
-          import os, glob
+          import os, glob, json
+
           for conf in glob.glob("build-system/*.json"):
-              with open(conf, "r", encoding="utf-8") as f:
-                  text = f.read()
-              if "! a random string !" in text:
+              try:
+                  with open(conf, "r", encoding="utf-8") as f:
+                      text = f.read()
+
+                  # Замена шаблонных строк bundle_id
                   text = text.replace("org.{! a random string !}.Telegram", "ph.telegra.Telegraph")
                   text = text.replace("! a random string !", "teleflow")
+                  
+                  data = json.loads(text)
+                  # Заменяем текстовые заглушки с пробелами на валидные значения API
+                  if "api_id" in data and not str(data["api_id"]).isdigit():
+                      data["api_id"] = "2496"
+                  if "api_hash" in data and ("get one" in str(data["api_hash"]) or "!" in str(data["api_hash"])):
+                      data["api_hash"] = "8da85b0d5b1622351545041d625242c0"
+                  
+                  data["bundle_id"] = "ph.telegra.Telegraph"
+
                   with open(conf, "w", encoding="utf-8") as f:
-                      f.write(text)
-                  print(f"Sanitized: {conf}")
+                      json.dump(data, f, indent=2)
+                  print(f"Successfully sanitized API keys in: {conf}")
+              except Exception as e:
+                  print(f"Error patching {conf}: {e}")
           '
           
           sed -i '' 's/org\.{! a random string !}\.Telegram/ph.telegra.Telegraph/g' Telegram/BUILD || true
