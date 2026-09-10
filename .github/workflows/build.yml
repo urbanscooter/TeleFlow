@@ -42,9 +42,9 @@ jobs:
         run: |
           sed -i '' 's/PresentationResourcesSettings.privacy/nil/g' submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift || true
 
-      - name: Inject APNs and Fix Provisioning BUILD Generator
+      - name: Inject APNs into Provisioning Profiles and Python Make Scripts
         run: |
-          # 1. Внедрение aps-environment в сами бинарные .mobileprovision файлы
+          # 1. Внедрение aps-environment в бинарные файлы профилей
           python3 -c '
           import glob, os
 
@@ -64,7 +64,7 @@ jobs:
                   print(f"Failed to patch {path}: {e}")
           '
 
-          # 2. Обход валидации aps-environment во всех скриптах build-system
+          # 2. Обход валидации aps-environment во всех файлах build-system
           python3 -c '
           import os
 
@@ -94,29 +94,6 @@ jobs:
                           print(f"Patched APNs checker in {fp}")
           '
 
-          # 3. Экспорт всех профилей в provisioning/BUILD
-          # Находим, где формируется provisioning BUILD в репозитории конфигурации, и добавляем exports_files
-          python3 -c '
-          import os
-
-          for root, _, files in os.walk("build-system"):
-              for file in files:
-                  if file.endswith((".py", ".bzl")):
-                      fp = os.path.join(root, file)
-                      with open(fp, "r", encoding="utf-8", errors="ignore") as f:
-                          content = f.read()
-                      
-                      if "package(default_visibility" in content and "provisioning" in content:
-                          content = content.replace("package(default_visibility", "exports_files(glob([\"*\"]))\npackage(default_visibility")
-                          with open(fp, "w", encoding="utf-8") as f:
-                              f.write(content)
-                          print(f"Patched provisioning export in: {fp}")
-                      elif "exports_files" not in content and "provisioning/BUILD" in content:
-                          content = content.replace("provisioning/BUILD", "provisioning/BUILD; exports_files(glob([\"*\"]))")
-                          with open(fp, "w", encoding="utf-8") as f:
-                              f.write(content)
-          '
-
       - name: Patch Configuration Placeholders and plist_fragment
         run: |
           python3 -c '
@@ -129,12 +106,60 @@ jobs:
                   text = text.replace("! a random string !", "teleflowfakeplaceholder")
                   with open(conf, "w", encoding="utf-8") as f:
                       f.write(text)
-                  print(f"Sanitized configuration placeholders in {conf}")
+                  print(f"Sanitized: {conf}")
           '
 
           FILE="build-system/bazel-utils/plist_fragment.bzl"
           sed -i '' 's/fail("Expected value for --define={}.*/value = ""/g' "$FILE"
           sed -i '' 's/template\.format(\*\*resolved_values)/template/g' "$FILE"
+
+      - name: Fix Provisioning Export Targets in Bazel Rules and Telegram BUILD
+        run: |
+          # 1. Заставляем repo-правила Bazel генерировать exports_files(glob(["*"])) в provisioning/BUILD
+          python3 -c '
+          import os
+
+          export_statement = """package(default_visibility = [\\"//visibility:public\\"])\\nexports_files(glob([\\"*\\"]))\\n"""
+
+          for root, _, files in os.walk("."):
+              for file in files:
+                  if file.endswith((".bzl", ".py")):
+                      fp = os.path.join(root, file)
+                      try:
+                          with open(fp, "r", encoding="utf-8", errors="ignore") as f:
+                              content = f.read()
+
+                          if "provisioning/BUILD" in content:
+                              # Находим место, где создается provisioning/BUILD и расширяем его экспорт
+                              content = content.replace("provisioning/BUILD\\", \"", "provisioning/BUILD\\", \\"" + export_statement)
+                              content = content.replace("provisioning/BUILD\", \"\"", "provisioning/BUILD\", \"" + export_statement + "\"")
+                              content = content.replace("provisioning/BUILD\", \"package(default_visibility = [\\\"//visibility:public\\\"])", "provisioning/BUILD\", \"" + export_statement)
+                              with open(fp, "w", encoding="utf-8") as f:
+                                  f.write(content)
+                              print(f"Patched provisioning generator in: {fp}")
+                      except Exception as e:
+                          pass
+          '
+
+          # 2. Патчим Telegram/BUILD: если @@build_configuration+//provisioning:Telegram.mobileprovision не доступен, 
+          # разрешаем использовать glob или отключаем строгую проверку таргета
+          python3 -c '
+          build_file = "Telegram/BUILD"
+          with open(build_file, "r", encoding="utf-8") as f:
+              lines = f.readlines()
+
+          new_lines = []
+          for line in lines:
+              # Если строчка требует конкретный таргет из external репозитория provisioning
+              if "@@build_configuration+//provisioning:Telegram.mobileprovision" in line or "@build_configuration//provisioning:Telegram.mobileprovision" in line:
+                  new_lines.append(line.replace("provisioning:Telegram.mobileprovision", "provisioning:provisioning_profile"))
+              else:
+                  new_lines.append(line)
+
+          with open(build_file, "w", encoding="utf-8") as f:
+              f.writelines(new_lines)
+          print("Patched Telegram/BUILD provisioning targets")
+          '
 
       - name: Build the App
         run: |
