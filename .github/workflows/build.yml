@@ -96,10 +96,12 @@ jobs:
 
       - name: Rewrite plist_fragment.bzl and Relax Validation
         run: |
-          # Переписываем Starlark правило без .format() и без несуществующих методов
           cat << 'EOF' > build-system/bazel-utils/plist_fragment.bzl
           def _plist_fragment_impl(ctx):
-              output = ctx.actions.declare_file(ctx.label.name + ".plist")
+              extension = ctx.attr.extension
+              if not extension:
+                  extension = "plist"
+              output = ctx.actions.declare_file(ctx.label.name + "." + extension)
               ctx.actions.write(
                   output = output,
                   content = """<dict>""" + ctx.attr.template + """</dict>""",
@@ -113,6 +115,8 @@ jobs:
               attrs = {
                   "template": attr.string(mandatory = True),
                   "values": attr.string_list(default = []),
+                  "defaults": attr.string_dict(default = {}),
+                  "extension": attr.string(default = "plist"),
               },
           )
           EOF
