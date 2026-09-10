@@ -42,7 +42,7 @@ jobs:
         run: |
           sed -i '' 's/PresentationResourcesSettings.privacy/nil/g' submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift || true
 
-      - name: Inject APNs into Provisioning Profiles and Python Make Scripts
+      - name: Inject APNs and Fix Provisioning BUILD Generator
         run: |
           # 1. Внедрение aps-environment в сами бинарные .mobileprovision файлы
           python3 -c '
@@ -64,7 +64,7 @@ jobs:
                   print(f"Failed to patch {path}: {e}")
           '
 
-          # 2. Обход валидации aps-environment во всех файлах build-system
+          # 2. Обход валидации aps-environment во всех скриптах build-system
           python3 -c '
           import os
 
@@ -92,6 +92,29 @@ jobs:
                           with open(fp, "w", encoding="utf-8") as f:
                               f.write("\n".join(new_lines) + "\n")
                           print(f"Patched APNs checker in {fp}")
+          '
+
+          # 3. Экспорт всех профилей в provisioning/BUILD
+          # Находим, где формируется provisioning BUILD в репозитории конфигурации, и добавляем exports_files
+          python3 -c '
+          import os
+
+          for root, _, files in os.walk("build-system"):
+              for file in files:
+                  if file.endswith((".py", ".bzl")):
+                      fp = os.path.join(root, file)
+                      with open(fp, "r", encoding="utf-8", errors="ignore") as f:
+                          content = f.read()
+                      
+                      if "package(default_visibility" in content and "provisioning" in content:
+                          content = content.replace("package(default_visibility", "exports_files(glob([\"*\"]))\npackage(default_visibility")
+                          with open(fp, "w", encoding="utf-8") as f:
+                              f.write(content)
+                          print(f"Patched provisioning export in: {fp}")
+                      elif "exports_files" not in content and "provisioning/BUILD" in content:
+                          content = content.replace("provisioning/BUILD", "provisioning/BUILD; exports_files(glob([\"*\"]))")
+                          with open(fp, "w", encoding="utf-8") as f:
+                              f.write(content)
           '
 
       - name: Patch Configuration Placeholders and plist_fragment
