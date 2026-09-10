@@ -92,7 +92,27 @@ jobs:
                           print(f"Patched APNs checker in {fp}")
           '
 
-      - name: Rewrite plist_fragment.bzl and Relax Apple Validation
+      - name: Sanitize Configuration Placeholders
+        run: |
+          # Очищаем JSON файлы от недопустимых символов и сразу ставим правильный Bundle ID
+          python3 -c '
+          import os, glob
+          for conf in glob.glob("build-system/*.json"):
+              with open(conf, "r", encoding="utf-8") as f:
+                  text = f.read()
+              if "! a random string !" in text:
+                  text = text.replace("org.{! a random string !}.Telegram", "ph.telegra.Telegraph")
+                  text = text.replace("! a random string !", "teleflow")
+                  with open(conf, "w", encoding="utf-8") as f:
+                      f.write(text)
+                  print(f"Sanitized: {conf}")
+          '
+          
+          # Подчищаем хардкод в BUILD файле, если он там есть
+          sed -i '' 's/org\.{! a random string !}\.Telegram/ph.telegra.Telegraph/g' Telegram/BUILD || true
+          sed -i '' 's/{! a random string !}/teleflow/g' Telegram/BUILD || true
+
+      - name: Rewrite plist_fragment.bzl
         run: |
           cat << 'EOF' > build-system/bazel-utils/plist_fragment.bzl
           def _plist_fragment_impl(ctx):
@@ -137,13 +157,6 @@ jobs:
           echo 'exports_files(glob(["*"]))' > build-system/fake-codesigning/profiles/BUILD
           sed -i '' 's|@@build_configuration+//provisioning:|//build-system/fake-codesigning/profiles:|g' Telegram/BUILD
           sed -i '' 's|@build_configuration//provisioning:|//build-system/fake-codesigning/profiles:|g' Telegram/BUILD
-
-      - name: Force Match Bundle IDs
-        run: |
-          # Принудительно заменяем шаблонные ID в BUILD файлах на рабочие из Entitlements
-          sed -i '' 's/org\.{! a random string !}\.Telegram/ph.telegra.Telegraph/g' Telegram/BUILD
-          sed -i '' 's/org\.teleflowfakeplaceholder\.Telegram/ph.telegra.Telegraph/g' Telegram/BUILD
-          sed -i '' 's/org\.teleflow\.Telegram/ph.telegra.Telegraph/g' Telegram/BUILD
 
       - name: Configure Bazel Settings and Memory
         run: |
