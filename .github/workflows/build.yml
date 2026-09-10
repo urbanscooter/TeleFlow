@@ -115,51 +115,36 @@ jobs:
 
       - name: Fix Provisioning Export Targets in Bazel Rules and Telegram BUILD
         run: |
-          # 1. Заставляем repo-правила Bazel генерировать exports_files(glob(["*"])) в provisioning/BUILD
+          # 1. Добавляем exports_files(glob(["*"])) во все генерируемые шаблоны BUILD для provisioning
           python3 -c '
           import os
 
-          export_statement = """package(default_visibility = [\\"//visibility:public\\"])\\nexports_files(glob([\\"*\\"]))\\n"""
+          target_snippet = "exports_files(glob([\"*\"]))"
 
-          for root, _, files in os.walk("."):
+          for root, _, files in os.walk("build-system"):
               for file in files:
-                  if file.endswith((".bzl", ".py")):
+                  if file.endswith((".py", ".bzl")):
                       fp = os.path.join(root, file)
                       try:
                           with open(fp, "r", encoding="utf-8", errors="ignore") as f:
                               content = f.read()
 
-                          if "provisioning/BUILD" in content:
-                              # Находим место, где создается provisioning/BUILD и расширяем его экспорт
-                              content = content.replace("provisioning/BUILD\\", \"", "provisioning/BUILD\\", \\"" + export_statement)
-                              content = content.replace("provisioning/BUILD\", \"\"", "provisioning/BUILD\", \"" + export_statement + "\"")
-                              content = content.replace("provisioning/BUILD\", \"package(default_visibility = [\\\"//visibility:public\\\"])", "provisioning/BUILD\", \"" + export_statement)
-                              with open(fp, "w", encoding="utf-8") as f:
-                                  f.write(content)
-                              print(f"Patched provisioning generator in: {fp}")
+                          if "provisioning" in content and "default_visibility" in content:
+                              if target_snippet not in content:
+                                  content = content.replace("default_visibility = [\"//visibility:public\"]", "default_visibility = [\"//visibility:public\"]); exports_files(glob([\"*\"])")
+                                  with open(fp, "w", encoding="utf-8") as f:
+                                      f.write(content)
+                                  print("Injected exports_files in:", fp)
                       except Exception as e:
                           pass
           '
 
-          # 2. Патчим Telegram/BUILD: если @@build_configuration+//provisioning:Telegram.mobileprovision не доступен, 
-          # разрешаем использовать glob или отключаем строгую проверку таргета
-          python3 -c '
-          build_file = "Telegram/BUILD"
-          with open(build_file, "r", encoding="utf-8") as f:
-              lines = f.readlines()
+          # 2. Перенаправляем таргет в Telegram/BUILD на локальный файл или filegroup, если пакет не экспортирует файл напрямую
+          sed -i '' 's|@@build_configuration+//provisioning:Telegram.mobileprovision|//build-system/fake-codesigning/profiles:Telegram.mobileprovision|g' Telegram/BUILD || true
+          sed -i '' 's|@build_configuration//provisioning:Telegram.mobileprovision|//build-system/fake-codesigning/profiles:Telegram.mobileprovision|g' Telegram/BUILD || true
 
-          new_lines = []
-          for line in lines:
-              # Если строчка требует конкретный таргет из external репозитория provisioning
-              if "@@build_configuration+//provisioning:Telegram.mobileprovision" in line or "@build_configuration//provisioning:Telegram.mobileprovision" in line:
-                  new_lines.append(line.replace("provisioning:Telegram.mobileprovision", "provisioning:provisioning_profile"))
-              else:
-                  new_lines.append(line)
-
-          with open(build_file, "w", encoding="utf-8") as f:
-              f.writelines(new_lines)
-          print("Patched Telegram/BUILD provisioning targets")
-          '
+          # Создаем BUILD-файл в директории с профилями fake-codesigning
+          echo 'exports_files(glob(["*"]))' > build-system/fake-codesigning/profiles/BUILD
 
       - name: Build the App
         run: |
