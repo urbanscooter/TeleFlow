@@ -211,4 +211,3 @@ def _safe_format(template, resolved_values):
           files: TeleFlow.ipa
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
