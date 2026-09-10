@@ -136,7 +136,8 @@ jobs:
 
           snippet = "\n".join([
               "    res = template",
-              "    for k, v in resolved_values.items():",
+              "    for k in resolved_values:",
+              "        v = str(resolved_values[k])",
               "        res = v.join(res.split('{' + k + '}'))",
               "    return struct("
           ])
