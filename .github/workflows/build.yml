@@ -94,7 +94,6 @@ jobs:
 
       - name: Sanitize Configuration Placeholders
         run: |
-          # Очищаем JSON файлы от недопустимых символов и сразу ставим правильный Bundle ID
           python3 -c '
           import os, glob
           for conf in glob.glob("build-system/*.json"):
@@ -108,7 +107,6 @@ jobs:
                   print(f"Sanitized: {conf}")
           '
           
-          # Подчищаем хардкод в BUILD файле, если он там есть
           sed -i '' 's/org\.{! a random string !}\.Telegram/ph.telegra.Telegraph/g' Telegram/BUILD || true
           sed -i '' 's/{! a random string !}/teleflow/g' Telegram/BUILD || true
 
@@ -120,6 +118,11 @@ jobs:
               if not extension:
                   extension = "plist"
               
+              if ctx.label.name.endswith("." + extension):
+                  filename = ctx.label.name
+              else:
+                  filename = ctx.label.name + "." + extension
+
               resolved_values = dict(ctx.attr.defaults)
               for key in ctx.attr.values:
                   if key in ctx.var:
@@ -134,12 +137,20 @@ jobs:
                   if target_sub in res:
                       res = v.join(res.split(target_sub))
 
-              output = ctx.actions.declare_file(ctx.label.name + "." + extension)
+              output = ctx.actions.declare_file(filename)
               ctx.actions.write(
                   output = output,
                   content = """<dict>""" + res + """</dict>""",
               )
-              return [DefaultInfo(files = depset([output]))]
+              return [
+                  DefaultInfo(
+                      files = depset([output]),
+                      data_runfiles = ctx.runfiles(files = [output]),
+                  ),
+                  OutputGroupInfo(
+                      plist = depset([output]),
+                  ),
+              ]
 
           plist_fragment = rule(
               implementation = _plist_fragment_impl,
