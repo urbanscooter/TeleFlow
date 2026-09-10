@@ -115,7 +115,7 @@ jobs:
 
       - name: Fix Provisioning Export Targets in Bazel Rules and Telegram BUILD
         run: |
-          # 1. Добавляем exports_files(glob(["*"])) во все генерируемые шаблоны BUILD для provisioning
+          # 1. Добавляем exports_files во все генерируемые шаблоны BUILD для provisioning
           python3 -c '
           import os
 
@@ -139,12 +139,22 @@ jobs:
                           pass
           '
 
-          # 2. Перенаправляем таргет в Telegram/BUILD на локальный файл или filegroup, если пакет не экспортирует файл напрямую
+          # 2. Перенаправляем таргет в Telegram/BUILD на локальный файл
           sed -i '' 's|@@build_configuration+//provisioning:Telegram.mobileprovision|//build-system/fake-codesigning/profiles:Telegram.mobileprovision|g' Telegram/BUILD || true
           sed -i '' 's|@build_configuration//provisioning:Telegram.mobileprovision|//build-system/fake-codesigning/profiles:Telegram.mobileprovision|g' Telegram/BUILD || true
 
-          # Создаем BUILD-файл в директории с профилями fake-codesigning
           echo 'exports_files(glob(["*"]))' > build-system/fake-codesigning/profiles/BUILD
+
+      - name: Configure Bazel Memory Limits
+        run: |
+          # Ограничиваем аппетиты Bazel по памяти, чтобы macOS не убивала процесс по OOM
+          cat << 'EOF' >> .bazelrc
+          startup --host_jvm_args=-Xmx4g
+          startup --host_jvm_args=-Xms2g
+          build --local_ram_resources=9216
+          build --local_cpu_resources=3
+          build --jobs=3
+          EOF
 
       - name: Build the App
         run: |
