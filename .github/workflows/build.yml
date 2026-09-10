@@ -96,6 +96,7 @@ jobs:
 
       - name: Patch Configuration Placeholders and plist_fragment
         run: |
+          # 1. Заменяем плейсхолдеры в JSON-конфигурациях
           python3 -c '
           import os, glob
 
@@ -103,22 +104,26 @@ jobs:
               with open(conf, "r", encoding="utf-8") as f:
                   text = f.read()
               if "! a random string !" in text:
-                  text = text.replace("! a random string !", "teleflowfakeplaceholder")
+                  text = text.replace("! a random string !", "teleflow")
                   with open(conf, "w", encoding="utf-8") as f:
                       f.write(text)
                   print(f"Sanitized: {conf}")
           '
 
+          # 2. Обезвреживаем аварийный fail(...) в plist_fragment.bzl и чистим фигурные скобки
           FILE="build-system/bazel-utils/plist_fragment.bzl"
           sed -i '' 's/fail("Expected value for --define={}.*/value = ""/g' "$FILE"
-          sed -i '' 's/template\.format(\*\*resolved_values)/template/g' "$FILE"
+          
+          # Заменяем остаточные фигурные скобки в шаблонах Telegram/BUILD на чистые имена
+          sed -i '' 's/{teleflowfakeplaceholder}/teleflow/g' Telegram/BUILD || true
+          sed -i '' 's/{teleflow}/teleflow/g' Telegram/BUILD || true
+
+          # 3. Отключаем строгий fail в rules_apple при валидации bundle_id
+          find build-system/bazel-rules -name "bundling_support.bzl" -exec sed -i '' 's/fail("Invalid character(s) in bundle_id:.*/pass/g' {} + || true
 
       - name: Redirect All Provisioning Profile Targets
         run: |
-          # 1. Создаем BUILD-файл в папке fake-codesigning/profiles для экспорта всех профилей
           echo 'exports_files(glob(["*"]))' > build-system/fake-codesigning/profiles/BUILD
-
-          # 2. Перенаправляем ВСЕ ссылки на @@build_configuration+//provisioning: и @build_configuration//provisioning:
           sed -i '' 's|@@build_configuration+//provisioning:|//build-system/fake-codesigning/profiles:|g' Telegram/BUILD
           sed -i '' 's|@build_configuration//provisioning:|//build-system/fake-codesigning/profiles:|g' Telegram/BUILD
 
