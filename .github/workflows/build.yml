@@ -97,37 +97,37 @@ jobs:
       - name: Rewrite plist_fragment.bzl and Relax Validation
         run: |
           cat << 'EOF' > build-system/bazel-utils/plist_fragment.bzl
-def _plist_fragment_impl(ctx):
-    template = ctx.attr.template
-    resolved_values = {}
-    for key in ctx.attr.values:
-        if key in ctx.var:
-            resolved_values[key] = ctx.var[key]
-        else:
-            resolved_values[key] = ""
+          def _plist_fragment_impl(ctx):
+              template = ctx.attr.template
+              resolved_values = {}
+              for key in ctx.attr.values:
+                  if key in ctx.var:
+                      resolved_values[key] = ctx.var[key]
+                  else:
+                      resolved_values[key] = ""
 
-    res = template
-    for k in resolved_values:
-        v = resolved_values[k]
-        res = res.replace("{" + k + "}", v)
+              res = template
+              for k in resolved_values:
+                  v = resolved_values[k]
+                  res = res.replace("{" + k + "}", v)
 
-    output = ctx.actions.declare_file(ctx.label.name + ".plist")
-    ctx.actions.write(
-        output = output,
-        content = """<dict>""" + res + """</dict>""",
-    )
-    return struct(
-        files = depset([output]),
-    )
+              output = ctx.actions.declare_file(ctx.label.name + ".plist")
+              ctx.actions.write(
+                  output = output,
+                  content = """<dict>""" + res + """</dict>""",
+              )
+              return struct(
+                  files = depset([output]),
+              )
 
-plist_fragment = rule(
-    implementation = _plist_fragment_impl,
-    attrs = {
-        "template": attr.string(mandatory = True),
-        "values": attr.string_list(default = []),
-    },
-)
-EOF
+          plist_fragment = rule(
+              implementation = _plist_fragment_impl,
+              attrs = {
+                  "template": attr.string(mandatory = True),
+                  "values": attr.string_list(default = []),
+              },
+          )
+          EOF
 
           find build-system/bazel-rules -name "bundling_support.bzl" -exec sed -i '' 's/fail("Invalid character(s) in bundle_id:.*/pass/g' {} + || true
 
