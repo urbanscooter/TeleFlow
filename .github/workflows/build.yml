@@ -44,7 +44,6 @@ jobs:
 
       - name: Inject APNs into Provisioning Profiles and Python Make Scripts
         run: |
-          # 1. Внедрение aps-environment в бинарные файлы профилей
           python3 -c '
           import glob, os
 
@@ -64,7 +63,6 @@ jobs:
                   print(f"Failed to patch {path}: {e}")
           '
 
-          # 2. Обход валидации aps-environment во всех файлах build-system
           python3 -c '
           import os
 
@@ -134,13 +132,18 @@ jobs:
           )
           EOF
 
-          find build-system/bazel-rules -name "bundling_support.bzl" -exec sed -i '' 's/fail("Invalid character(s) in bundle_id:.*/pass/g' {} + || true
-
       - name: Redirect All Provisioning Profile Targets
         run: |
           echo 'exports_files(glob(["*"]))' > build-system/fake-codesigning/profiles/BUILD
           sed -i '' 's|@@build_configuration+//provisioning:|//build-system/fake-codesigning/profiles:|g' Telegram/BUILD
           sed -i '' 's|@build_configuration//provisioning:|//build-system/fake-codesigning/profiles:|g' Telegram/BUILD
+
+      - name: Force Match Bundle IDs
+        run: |
+          # Принудительно заменяем шаблонные ID в BUILD файлах на рабочие из Entitlements
+          sed -i '' 's/org\.{! a random string !}\.Telegram/ph.telegra.Telegraph/g' Telegram/BUILD
+          sed -i '' 's/org\.teleflowfakeplaceholder\.Telegram/ph.telegra.Telegraph/g' Telegram/BUILD
+          sed -i '' 's/org\.teleflow\.Telegram/ph.telegra.Telegraph/g' Telegram/BUILD
 
       - name: Configure Bazel Settings and Memory
         run: |
