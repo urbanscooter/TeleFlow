@@ -44,7 +44,7 @@ jobs:
 
       - name: Inject APNs into Provisioning Profiles and Python Make Scripts
         run: |
-          python3 -c '
+          python3 << 'EOF'
           import glob, os
 
           for path in glob.glob("build-system/fake-codesigning/profiles/*.mobileprovision"):
@@ -61,9 +61,9 @@ jobs:
                       print(f"Injected APNs entitlement: {path}")
               except Exception as e:
                   print(f"Failed to patch {path}: {e}")
-          '
+          EOF
 
-          python3 -c '
+          python3 << 'EOF'
           import os
 
           for root, _, files in os.walk("build-system"):
@@ -90,11 +90,11 @@ jobs:
                           with open(fp, "w", encoding="utf-8") as f:
                               f.write("\n".join(new_lines) + "\n")
                           print(f"Patched APNs checker in {fp}")
-          '
+          EOF
 
       - name: Sanitize Configuration and Provide Valid API Credentials
         run: |
-          python3 -c '
+          python3 << 'EOF'
           import os, glob, json
 
           for conf in glob.glob("build-system/*.json"):
@@ -102,12 +102,10 @@ jobs:
                   with open(conf, "r", encoding="utf-8") as f:
                       text = f.read()
 
-                  # Замена шаблонных строк bundle_id
                   text = text.replace("org.{! a random string !}.Telegram", "ph.telegra.Telegraph")
                   text = text.replace("! a random string !", "teleflow")
                   
                   data = json.loads(text)
-                  # Заменяем текстовые заглушки с пробелами на валидные значения API
                   if "api_id" in data and not str(data["api_id"]).isdigit():
                       data["api_id"] = "2496"
                   if "api_hash" in data and ("get one" in str(data["api_hash"]) or "!" in str(data["api_hash"])):
@@ -120,62 +118,37 @@ jobs:
                   print(f"Successfully sanitized API keys in: {conf}")
               except Exception as e:
                   print(f"Error patching {conf}: {e}")
-          '
+          EOF
           
           sed -i '' 's/org\.{! a random string !}\.Telegram/ph.telegra.Telegraph/g' Telegram/BUILD || true
           sed -i '' 's/{! a random string !}/teleflow/g' Telegram/BUILD || true
 
-      - name: Rewrite plist_fragment.bzl
+      - name: Fix Original plist_fragment.bzl
         run: |
-          cat << 'EOF' > build-system/bazel-utils/plist_fragment.bzl
-          def _plist_fragment_impl(ctx):
-              extension = ctx.attr.extension
-              if not extension:
-                  extension = "plist"
-              
-              if ctx.label.name.endswith("." + extension):
-                  filename = ctx.label.name
-              else:
-                  filename = ctx.label.name + "." + extension
+          git checkout build-system/bazel-utils/plist_fragment.bzl || true
 
-              resolved_values = dict(ctx.attr.defaults)
-              for key in ctx.attr.values:
-                  if key in ctx.var:
-                      resolved_values[key] = ctx.var[key]
-                  elif key not in resolved_values:
-                      resolved_values[key] = ""
+          python3 << 'EOF'
+          fp = "build-system/bazel-utils/plist_fragment.bzl"
+          with open(fp, "r", encoding="utf-8") as f:
+              content = f.read()
 
-              res = ctx.attr.template
-              for k in resolved_values:
-                  v = str(resolved_values[k])
-                  target_sub = "{" + k + "}"
-                  if target_sub in res:
-                      res = v.join(res.split(target_sub))
+          content = content.replace("fail(\"Expected value for --define={} was not found\".format(key))", "value = \"\"")
 
-              output = ctx.actions.declare_file(filename)
-              ctx.actions.write(
-                  output = output,
-                  content = """<dict>""" + res + """</dict>""",
-              )
-              return [
-                  DefaultInfo(
-                      files = depset([output]),
-                      data_runfiles = ctx.runfiles(files = [output]),
-                  ),
-                  OutputGroupInfo(
-                      plist = depset([output]),
-                  ),
-              ]
+          snippet = "\n".join([
+              "    res = template",
+              "    for k, v in resolved_values.items():",
+              "        res = v.join(res.split('{' + k + '}'))",
+              "    return struct("
+          ])
 
-          plist_fragment = rule(
-              implementation = _plist_fragment_impl,
-              attrs = {
-                  "template": attr.string(mandatory = True),
-                  "values": attr.string_list(default = []),
-                  "defaults": attr.string_dict(default = {}),
-                  "extension": attr.string(default = "plist"),
-              },
-          )
+          if "template.format(**resolved_values)" in content:
+              content = content.replace("template.format(**resolved_values)", "res")
+              content = content.replace("return struct(", snippet)
+              with open(fp, "w", encoding="utf-8") as f:
+                  f.write(content)
+              print("Patched plist_fragment.bzl successfully")
+          else:
+              print("Warning: pattern not found")
           EOF
 
       - name: Redirect All Provisioning Profile Targets
