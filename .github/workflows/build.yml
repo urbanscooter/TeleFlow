@@ -132,24 +132,25 @@ jobs:
           with open(fp, "r", encoding="utf-8") as f:
               content = f.read()
 
-          content = content.replace("fail(\"Expected value for --define={} was not found\".format(key))", "value = \"\"")
+          content = content.replace('fail("Expected value for --define={} was not found".format(key))', 'value = ""')
 
-          snippet = "\n".join([
-              "    res = template",
-              "    for k in resolved_values:",
-              "        v = str(resolved_values[k])",
-              "        res = v.join(res.split('{' + k + '}'))",
-              "    return struct("
-          ])
+          helper = """
+def _safe_format(template, resolved_values):
+    res = template
+    for k in resolved_values:
+        v = str(resolved_values[k])
+        target = "{" + k + "}"
+        if target in res:
+            res = v.join(res.split(target))
+    return res
 
-          if "template.format(**resolved_values)" in content:
-              content = content.replace("template.format(**resolved_values)", "res")
-              content = content.replace("return struct(", snippet)
-              with open(fp, "w", encoding="utf-8") as f:
-                  f.write(content)
-              print("Patched plist_fragment.bzl successfully")
-          else:
-              print("Warning: pattern not found")
+"""
+          content = helper + content
+          content = content.replace("template.format(**resolved_values)", "_safe_format(template, resolved_values)")
+
+          with open(fp, "w", encoding="utf-8") as f:
+              f.write(content)
+          print("Patched plist_fragment.bzl with _safe_format successfully")
           EOF
 
       - name: Redirect All Provisioning Profile Targets
