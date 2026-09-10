@@ -94,21 +94,34 @@ jobs:
                           print(f"Patched APNs checker in {fp}")
           '
 
-      - name: Rewrite plist_fragment.bzl and Relax Validation
+      - name: Rewrite plist_fragment.bzl and Relax Apple Validation
         run: |
           cat << 'EOF' > build-system/bazel-utils/plist_fragment.bzl
           def _plist_fragment_impl(ctx):
               extension = ctx.attr.extension
               if not extension:
                   extension = "plist"
+              
+              resolved_values = dict(ctx.attr.defaults)
+              for key in ctx.attr.values:
+                  if key in ctx.var:
+                      resolved_values[key] = ctx.var[key]
+                  elif key not in resolved_values:
+                      resolved_values[key] = ""
+
+              res = ctx.attr.template
+              for k in resolved_values:
+                  v = str(resolved_values[k])
+                  target_sub = "{" + k + "}"
+                  if target_sub in res:
+                      res = v.join(res.split(target_sub))
+
               output = ctx.actions.declare_file(ctx.label.name + "." + extension)
               ctx.actions.write(
                   output = output,
-                  content = """<dict>""" + ctx.attr.template + """</dict>""",
+                  content = """<dict>""" + res + """</dict>""",
               )
-              return struct(
-                  files = depset([output]),
-              )
+              return [DefaultInfo(files = depset([output]))]
 
           plist_fragment = rule(
               implementation = _plist_fragment_impl,
@@ -129,7 +142,7 @@ jobs:
           sed -i '' 's|@@build_configuration+//provisioning:|//build-system/fake-codesigning/profiles:|g' Telegram/BUILD
           sed -i '' 's|@build_configuration//provisioning:|//build-system/fake-codesigning/profiles:|g' Telegram/BUILD
 
-      - name: Configure Bazel Memory Limits
+      - name: Configure Bazel Settings and Memory
         run: |
           cat << 'EOF' >> .bazelrc
           startup --host_jvm_args=-Xmx4g
@@ -137,6 +150,8 @@ jobs:
           build --local_resources=memory=9216
           build --local_resources=cpu=3
           build --jobs=3
+          build --strategy=SwiftCompile=standalone
+          build --incompatible_disallow_struct_provider_syntax=false
           EOF
 
       - name: Build the App
