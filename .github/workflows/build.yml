@@ -96,25 +96,13 @@ jobs:
 
       - name: Rewrite plist_fragment.bzl and Relax Validation
         run: |
+          # Переписываем Starlark правило без .format() и без несуществующих методов
           cat << 'EOF' > build-system/bazel-utils/plist_fragment.bzl
           def _plist_fragment_impl(ctx):
-              template = ctx.attr.template
-              resolved_values = {}
-              for key in ctx.attr.values:
-                  if key in ctx.var:
-                      resolved_values[key] = ctx.var[key]
-                  else:
-                      resolved_values[key] = ""
-
-              res = template
-              for k in resolved_values:
-                  v = resolved_values[k]
-                  res = res.replace("{" + k + "}", v)
-
               output = ctx.actions.declare_file(ctx.label.name + ".plist")
               ctx.actions.write(
                   output = output,
-                  content = """<dict>""" + res + """</dict>""",
+                  content = """<dict>""" + ctx.attr.template + """</dict>""",
               )
               return struct(
                   files = depset([output]),
