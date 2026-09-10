@@ -44,7 +44,7 @@ jobs:
 
       - name: Inject APNs into Provisioning Profiles and Python Make Scripts
         run: |
-          python3 << 'EOF'
+          cat << 'PY_EOF' > patch_apns.py
           import glob, os
 
           for path in glob.glob("build-system/fake-codesigning/profiles/*.mobileprovision"):
@@ -61,10 +61,6 @@ jobs:
                       print(f"Injected APNs entitlement: {path}")
               except Exception as e:
                   print(f"Failed to patch {path}: {e}")
-          EOF
-
-          python3 << 'EOF'
-          import os
 
           for root, _, files in os.walk("build-system"):
               for file in files:
@@ -90,11 +86,13 @@ jobs:
                           with open(fp, "w", encoding="utf-8") as f:
                               f.write("\n".join(new_lines) + "\n")
                           print(f"Patched APNs checker in {fp}")
-          EOF
+          PY_EOF
+          python3 patch_apns.py
+          rm -f patch_apns.py
 
       - name: Sanitize Configuration and Provide Valid API Credentials
         run: |
-          python3 << 'EOF'
+          cat << 'PY_EOF' > sanitize_conf.py
           import os, glob, json
 
           for conf in glob.glob("build-system/*.json"):
@@ -118,8 +116,10 @@ jobs:
                   print(f"Successfully sanitized API keys in: {conf}")
               except Exception as e:
                   print(f"Error patching {conf}: {e}")
-          EOF
-          
+          PY_EOF
+          python3 sanitize_conf.py
+          rm -f sanitize_conf.py
+
           sed -i '' 's/org\.{! a random string !}\.Telegram/ph.telegra.Telegraph/g' Telegram/BUILD || true
           sed -i '' 's/{! a random string !}/teleflow/g' Telegram/BUILD || true
 
@@ -127,14 +127,14 @@ jobs:
         run: |
           git checkout build-system/bazel-utils/plist_fragment.bzl || true
 
-          python3 << 'EOF'
+          cat << 'PY_EOF' > patch_plist.py
           fp = "build-system/bazel-utils/plist_fragment.bzl"
           with open(fp, "r", encoding="utf-8") as f:
               content = f.read()
 
           content = content.replace('fail("Expected value for --define={} was not found".format(key))', 'value = ""')
 
-          helper = """
+          helper = '''
 def _safe_format(template, resolved_values):
     res = template
     for k in resolved_values:
@@ -144,14 +144,16 @@ def _safe_format(template, resolved_values):
             res = v.join(res.split(target))
     return res
 
-"""
+'''
           content = helper + content
           content = content.replace("template.format(**resolved_values)", "_safe_format(template, resolved_values)")
 
           with open(fp, "w", encoding="utf-8") as f:
               f.write(content)
-          print("Patched plist_fragment.bzl with _safe_format successfully")
-          EOF
+          print("Patched plist_fragment.bzl successfully")
+          PY_EOF
+          python3 patch_plist.py
+          rm -f patch_plist.py
 
       - name: Redirect All Provisioning Profile Targets
         run: |
@@ -209,3 +211,4 @@ def _safe_format(template, resolved_values):
           files: TeleFlow.ipa
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
