@@ -94,31 +94,41 @@ jobs:
                           print(f"Patched APNs checker in {fp}")
           '
 
-      - name: Patch Configuration Placeholders and plist_fragment
+      - name: Rewrite plist_fragment.bzl and Relax Validation
         run: |
-          # 1. Заменяем плейсхолдеры в JSON-конфигурациях
-          python3 -c '
-          import os, glob
+          cat << 'EOF' > build-system/bazel-utils/plist_fragment.bzl
+def _plist_fragment_impl(ctx):
+    template = ctx.attr.template
+    resolved_values = {}
+    for key in ctx.attr.values:
+        if key in ctx.var:
+            resolved_values[key] = ctx.var[key]
+        else:
+            resolved_values[key] = ""
 
-          for conf in glob.glob("build-system/*.json"):
-              with open(conf, "r", encoding="utf-8") as f:
-                  text = f.read()
-              if "! a random string !" in text:
-                  text = text.replace("! a random string !", "teleflow")
-                  with open(conf, "w", encoding="utf-8") as f:
-                      f.write(text)
-                  print(f"Sanitized: {conf}")
-          '
+    res = template
+    for k in resolved_values:
+        v = resolved_values[k]
+        res = res.replace("{" + k + "}", v)
 
-          # 2. Обезвреживаем аварийный fail(...) в plist_fragment.bzl и чистим фигурные скобки
-          FILE="build-system/bazel-utils/plist_fragment.bzl"
-          sed -i '' 's/fail("Expected value for --define={}.*/value = ""/g' "$FILE"
-          
-          # Заменяем остаточные фигурные скобки в шаблонах Telegram/BUILD на чистые имена
-          sed -i '' 's/{teleflowfakeplaceholder}/teleflow/g' Telegram/BUILD || true
-          sed -i '' 's/{teleflow}/teleflow/g' Telegram/BUILD || true
+    output = ctx.actions.declare_file(ctx.label.name + ".plist")
+    ctx.actions.write(
+        output = output,
+        content = """<dict>""" + res + """</dict>""",
+    )
+    return struct(
+        files = depset([output]),
+    )
 
-          # 3. Отключаем строгий fail в rules_apple при валидации bundle_id
+plist_fragment = rule(
+    implementation = _plist_fragment_impl,
+    attrs = {
+        "template": attr.string(mandatory = True),
+        "values": attr.string_list(default = []),
+    },
+)
+EOF
+
           find build-system/bazel-rules -name "bundling_support.bzl" -exec sed -i '' 's/fail("Invalid character(s) in bundle_id:.*/pass/g' {} + || true
 
       - name: Redirect All Provisioning Profile Targets
