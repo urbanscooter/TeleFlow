@@ -111,12 +111,13 @@ jobs:
                   print(f"Error: {e}")
           '
           
-          # Заменяем все вариации префиксов и плейсхолдеров в Telegram/BUILD на точный AppID
+          # Идемпотентная замена префиксов и плейсхолдеров в Telegram/BUILD.
+          # Первая группа (C67CF9S4VU)? не даёт накапливаться двойному префиксу.
           sed -i '' 's/\$(AppIdentifierPrefix)/C67CF9S4VU./g' Telegram/BUILD || true
           sed -i '' 's/\$(TeamId)\./C67CF9S4VU./g' Telegram/BUILD || true
           sed -i '' 's/{telegram_team_id}\./C67CF9S4VU./g' Telegram/BUILD || true
           sed -i '' 's/{team_id}\./C67CF9S4VU./g' Telegram/BUILD || true
-          sed -i '' 's/\.ph\.telegra\.Telegraph/C67CF9S4VU.ph.telegra.Telegraph/g' Telegram/BUILD || true
+          sed -i '' -E 's/(C67CF9S4VU)?\.ph\.telegra\.Telegraph/C67CF9S4VU.ph.telegra.Telegraph/g' Telegram/BUILD || true
 
       - name: Patch plist_fragment.bzl
         run: |
@@ -137,7 +138,9 @@ jobs:
               "        target = \"{\" + k + \"}\"\n"
               "        if target in res:\n"
               "            res = v.join(res.split(target))\n"
-              "    res = res.replace(\".ph.telegra.Telegraph\", \"C67CF9S4VU.ph.telegra.Telegraph\")\n"
+              "    # Идемпотентно: не добавляем C67CF9S4VU. второй раз\n"
+              "    if \"C67CF9S4VU.ph.telegra.Telegraph\" not in res:\n"
+              "        res = res.replace(\".ph.telegra.Telegraph\", \"C67CF9S4VU.ph.telegra.Telegraph\")\n"
               "    res = res.replace(\"$(AppIdentifierPrefix)\", \"C67CF9S4VU.\")\n"
               "    res = res.replace(\"$(TeamId).\", \"C67CF9S4VU.\")\n"
               "    return res\n\n"
