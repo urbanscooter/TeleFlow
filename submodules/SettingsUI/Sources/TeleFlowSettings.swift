@@ -2,23 +2,20 @@ import Foundation
 import SwiftSignalKit
 
 /// Синглтон-менеджер настроек TeleFlow.
-/// Персистентное хранение через UserDefaults с локальным именованным suitename.
-/// Уведомляет подписчиков через NotificationCenter при изменении любого свойства.
 public final class TeleFlowSettings {
-    /// Стандартный shared-инстанс.
     public static let shared = TeleFlowSettings()
 
-    /// Уникальный идентификатор для UserDefaults.
     private let suiteName = "group.ph.telegra.TeleFlow"
 
-    /// Ключи для UserDefaults.
     private enum Keys: String {
         case isAntiDeleteEnabled
         case isHideAdsEnabled
         case isHideStoriesEnabled
+        case isGrayOutDeletedEnabled
+        case isShowTrashIconEnabled
+        case deletedOpacity
     }
 
-    /// Имя уведомления при изменении любого флага.
     public static let didChangeNotification = Notification.Name("TeleFlowSettingsDidChange")
 
     let userDefaults: UserDefaults
@@ -26,7 +23,6 @@ public final class TeleFlowSettings {
     // MARK: - Свойства
 
     /// Анти-удаление сообщений.
-    /// Если `true`, входящие сообщения сохраняются даже если собеседник удалил их для всех.
     public var isAntiDeleteEnabled: Bool {
         get { userDefaults.bool(forKey: Keys.isAntiDeleteEnabled.rawValue) }
         set {
@@ -37,8 +33,7 @@ public final class TeleFlowSettings {
         }
     }
 
-    /// Скрытие рекламы и спонсированных постов.
-    /// Если `true`, объекты SponsoredMessage фильтруются до отрисовки.
+    /// Скрытие рекламы.
     public var isHideAdsEnabled: Bool {
         get { userDefaults.bool(forKey: Keys.isHideAdsEnabled.rawValue) }
         set {
@@ -49,8 +44,7 @@ public final class TeleFlowSettings {
         }
     }
 
-    /// Скрытие истории Stories.
-    /// Если `true`, высота контейнера историй возвращается как 0 и рендеринг отключается.
+    /// Скрытие историй.
     public var isHideStoriesEnabled: Bool {
         get { userDefaults.bool(forKey: Keys.isHideStoriesEnabled.rawValue) }
         set {
@@ -61,7 +55,49 @@ public final class TeleFlowSettings {
         }
     }
 
-    // MARK: - Инициализация
+    /// Приглушать удалённые сообщения (прозрачность/серость). По умолчанию ВКЛ.
+    public var isGrayOutDeletedEnabled: Bool {
+        get {
+            if userDefaults.object(forKey: Keys.isGrayOutDeletedEnabled.rawValue) == nil { return true }
+            return userDefaults.bool(forKey: Keys.isGrayOutDeletedEnabled.rawValue)
+        }
+        set {
+            guard newValue != isGrayOutDeletedEnabled else { return }
+            userDefaults.set(newValue, forKey: Keys.isGrayOutDeletedEnabled.rawValue)
+            notifyChange()
+        }
+    }
+
+    /// Показывать иконку корзины возле времени. По умолчанию ВКЛ.
+    public var isShowTrashIconEnabled: Bool {
+        get {
+            if userDefaults.object(forKey: Keys.isShowTrashIconEnabled.rawValue) == nil { return true }
+            return userDefaults.bool(forKey: Keys.isShowTrashIconEnabled.rawValue)
+        }
+        set {
+            guard newValue != isShowTrashIconEnabled else { return }
+            userDefaults.set(newValue, forKey: Keys.isShowTrashIconEnabled.rawValue)
+            notifyChange()
+        }
+    }
+
+    /// Непрозрачность удалённого сообщения. 1.0 — как обычно, 0.3 — сильно приглушено.
+    /// По умолчанию 0.55.
+    public var deletedOpacity: Double {
+        get {
+            if userDefaults.object(forKey: Keys.deletedOpacity.rawValue) == nil { return 0.55 }
+            let value = userDefaults.double(forKey: Keys.deletedOpacity.rawValue)
+            return min(1.0, max(0.1, value))
+        }
+        set {
+            let clamped = min(1.0, max(0.1, newValue))
+            guard clamped != deletedOpacity else { return }
+            userDefaults.set(clamped, forKey: Keys.deletedOpacity.rawValue)
+            notifyChange()
+        }
+    }
+
+    // MARK: - Init
 
     private init() {
         if let suite = UserDefaults(suiteName: suiteName) {
@@ -71,13 +107,12 @@ public final class TeleFlowSettings {
         }
     }
 
-    // MARK: - Уведомления
+    // MARK: - Notifications
 
     private func notifyChange() {
         NotificationCenter.default.post(name: Self.didChangeNotification, object: nil)
     }
 
-    /// Подписка на изменения настроек. Возвращает disposable для отмены.
     public func observeChanges(_ handler: @escaping () -> Void) -> Disposable {
         let center = NotificationCenter.default
         let token = center.addObserver(forName: Self.didChangeNotification, object: nil, queue: .main) { _ in
@@ -88,51 +123,63 @@ public final class TeleFlowSettings {
         }
     }
 
-    /// Сброс всех флагов к значениям по умолчанию.
     public func resetAll() {
-        userDefaults.removeObject(forKey: Keys.isAntiDeleteEnabled.rawValue)
-        userDefaults.removeObject(forKey: Keys.isHideAdsEnabled.rawValue)
-        userDefaults.removeObject(forKey: Keys.isHideStoriesEnabled.rawValue)
+        for key in [Keys.isAntiDeleteEnabled, .isHideAdsEnabled, .isHideStoriesEnabled,
+                    .isGrayOutDeletedEnabled, .isShowTrashIconEnabled, .deletedOpacity] {
+            userDefaults.removeObject(forKey: key.rawValue)
+        }
         notifyChange()
     }
 }
 
-// MARK: - Удобные обёртки для SignalKit
+// MARK: - SignalKit wrappers
 
 public extension TeleFlowSettings {
-    /// Signal, эмитирующий текущее значение isAntiDeleteEnabled.
     var antiDeleteEnabledSignal: Signal<Bool, NoError> {
         return Signal<Bool, NoError> { subscriber in
             subscriber.putNext(self.isAntiDeleteEnabled)
-            let disposable = self.observeChanges {
-                subscriber.putNext(self.isAntiDeleteEnabled)
-            }
-            return disposable
-        }
-        |> runOn(.mainQueue())
+            let d = self.observeChanges { subscriber.putNext(self.isAntiDeleteEnabled) }
+            return d
+        } |> runOn(.mainQueue())
     }
 
-    /// Signal, эмитирующий текущее значение isHideAdsEnabled.
     var hideAdsEnabledSignal: Signal<Bool, NoError> {
         return Signal<Bool, NoError> { subscriber in
             subscriber.putNext(self.isHideAdsEnabled)
-            let disposable = self.observeChanges {
-                subscriber.putNext(self.isHideAdsEnabled)
-            }
-            return disposable
-        }
-        |> runOn(.mainQueue())
+            let d = self.observeChanges { subscriber.putNext(self.isHideAdsEnabled) }
+            return d
+        } |> runOn(.mainQueue())
     }
 
-    /// Signal, эмитирующий текущее значение isHideStoriesEnabled.
     var hideStoriesEnabledSignal: Signal<Bool, NoError> {
         return Signal<Bool, NoError> { subscriber in
             subscriber.putNext(self.isHideStoriesEnabled)
-            let disposable = self.observeChanges {
-                subscriber.putNext(self.isHideStoriesEnabled)
-            }
-            return disposable
-        }
-        |> runOn(.mainQueue())
+            let d = self.observeChanges { subscriber.putNext(self.isHideStoriesEnabled) }
+            return d
+        } |> runOn(.mainQueue())
+    }
+
+    var grayOutDeletedEnabledSignal: Signal<Bool, NoError> {
+        return Signal<Bool, NoError> { subscriber in
+            subscriber.putNext(self.isGrayOutDeletedEnabled)
+            let d = self.observeChanges { subscriber.putNext(self.isGrayOutDeletedEnabled) }
+            return d
+        } |> runOn(.mainQueue())
+    }
+
+    var showTrashIconEnabledSignal: Signal<Bool, NoError> {
+        return Signal<Bool, NoError> { subscriber in
+            subscriber.putNext(self.isShowTrashIconEnabled)
+            let d = self.observeChanges { subscriber.putNext(self.isShowTrashIconEnabled) }
+            return d
+        } |> runOn(.mainQueue())
+    }
+
+    var deletedOpacitySignal: Signal<Double, NoError> {
+        return Signal<Double, NoError> { subscriber in
+            subscriber.putNext(self.deletedOpacity)
+            let d = self.observeChanges { subscriber.putNext(self.deletedOpacity) }
+            return d
+        } |> runOn(.mainQueue())
     }
 }
