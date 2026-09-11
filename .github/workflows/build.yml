@@ -222,13 +222,21 @@ jobs:
       - name: Package IPA
         run: |
           mkdir -p Payload
-          APP_DIR=$(find bazel-out -type d -name "Telegram.app" | head -n 1)
+          APP_DIR=$(find -L bazel-out -maxdepth 14 -path '*/Telegram_archive-root/Payload/Telegram.app' -type d | head -n 1)
+          if [ -z "$APP_DIR" ]; then
+            echo "Trying fallback path..."
+            APP_DIR=$(find -L bazel-out -maxdepth 14 -path '*/Telegram.app' -type d | head -n 1)
+          fi
           if [ -z "$APP_DIR" ]; then
             echo "Telegram.app not found!"
+            echo "Listing candidates:"
+            find -L bazel-out -maxdepth 14 -name "Telegram.app" -type d 2>/dev/null | head -20
             exit 1
           fi
+          echo "Found: $APP_DIR"
           cp -R "$APP_DIR" Payload/
           zip -qr TeleFlow.ipa Payload
+          ls -la TeleFlow.ipa
 
       - name: Create Release and Upload IPA
         uses: softprops/action-gh-release@v2
