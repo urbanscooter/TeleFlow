@@ -2,8 +2,6 @@ import Foundation
 import Postbox
 import TelegramCore
 
-/// Атрибут, вешается на сообщение после того, как собеседник его удалил.
-/// Сообщение остаётся в postbox, но помечено как "удалённое" — рендерится приглушённо.
 public final class TeleFlowDeletedAttribute: MessageAttribute {
     public let deletedAt: Int32
     public let originalAuthorName: String?
