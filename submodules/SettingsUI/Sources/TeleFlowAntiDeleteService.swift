@@ -1,121 +1,63 @@
 import Foundation
+import UIKit
 import Postbox
 import TelegramCore
 import SwiftSignalKit
 
 public final class TeleFlowAntiDeleteService {
     public static let shared = TeleFlowAntiDeleteService()
-
     public static let deletionMarkerText: String = "Удалено"
-
-    public static let accountReadyNotification =
-        Notification.Name("TeleFlowAntiDeleteService.accountReady")
-
-    private static let deletedIdsKey = "TeleFlow_DeletedMessageIds_v2"
-    private static let snapshotsKey = "TeleFlow_DeletedSnapshots_v1"
+    public static let accountReadyNotification = Notification.Name("TeleFlowAntiDeleteService.accountReady")
 
     private let queue = Queue()
-    private var deletedMessageIds: Set<String> = []
-    private var snapshots: [String: TeleFlowDeletedSnapshot] = [:]
     private var isEnabled: Bool = TeleFlowSettings.shared.isAntiDeleteEnabled
     private var settingsDisposable: Disposable?
+    private var refreshTimer: SwiftSignalKit.Timer?
 
     private init() {
-        self.loadFromDisk()
-        self.settingsDisposable = TeleFlowSettings.shared.observeChanges { [weak self] in
-            self?.queue.async {
-                self?.isEnabled = TeleFlowSettings.shared.isAntiDeleteEnabled
-            }
+        self.settingsDisposable = TeleFlowSettings.shared.observeChanges { [weak self] _ in
+            self?.queue.async { self?.isEnabled = TeleFlowSettings.shared.isAntiDeleteEnabled }
+            self?.refreshUI()
         }
+        // периодическое обновление видимых баблов
+        self.refreshTimer = SwiftSignalKit.Timer(timeout: 1.0, repeat: true, completion: { [weak self] in
+            self?.refreshUI()
+        }, queue: .mainQueue())
+        self.refreshTimer?.start()
     }
 
-    // MARK: - Public
+    // MARK: - Settings
 
     public func updateSettings(isEnabled: Bool) {
-        self.queue.async {
-            self.isEnabled = isEnabled
-        }
+        self.queue.async { self.isEnabled = isEnabled }
+        self.refreshUI()
     }
 
-    public func isMessageDeletedLocally(messageId: MessageId) -> Bool {
-        let key = self.storageKey(for: messageId)
-        var result = false
-        self.queue.sync { result = self.deletedMessageIds.contains(key) }
-        return result
-    }
+    // MARK: - Delete hook
 
-    public func snapshot(messageId: MessageId) -> TeleFlowDeletedSnapshot? {
-        let key = self.storageKey(for: messageId)
-        var result: TeleFlowDeletedSnapshot?
-        self.queue.sync { result = self.snapshots[key] }
-        return result
-    }
-
-    /// Вызывается из delete-пайплайна ПЕРЕД фактическим удалением.
+    /// Вызывается перед удалением. Помечает сообщение атрибутом, не удаляет.
     public func handleIncomingMessageDeletions(account: Account, messageIds: [MessageId]) {
         guard !messageIds.isEmpty else { return }
-
         self.queue.async {
-            guard self.isEnabled else {
-                _ = (account.postbox.transaction { tx in
-                    for id in messageIds { tx.removeMessage(id) }
-                }).start()
-                return
-            }
-
-            _ = (account.postbox.transaction { transaction -> Void in
+            guard self.isEnabled else { return }
+            let _ = (account.postbox.transaction { transaction -> Void in
                 for messageId in messageIds {
                     guard let message = transaction.getMessage(messageId) else { continue }
-
-                    if message.attributes.contains(where: { $0 is TeleFlowDeletedAttribute }) {
-                        continue
-                    }
-
-                    let authorName: String? = {
-                        if let peer = message.author as? TelegramUser {
-                            let parts = [peer.firstName, peer.lastName].compactMap { $0 }.filter { !$0.isEmpty }
-                            return parts.isEmpty ? nil : parts.joined(separator: " ")
-                        }
-                        return nil
-                    }()
-
-                    let mediaKind: String? = {
-                        for m in message.media {
-                            if m is TelegramMediaImage { return "photo" }
-                            if m is TelegramMediaFile { return "file" }
-                        }
-                        return nil
-                    }()
-
-                    let snap = TeleFlowDeletedSnapshot(
-                        peerId: messageId.peerId.toInt64(),
-                        namespace: messageId.namespace,
-                        messageId: messageId.id,
-                        timestamp: message.timestamp,
-                        text: message.text,
-                        authorId: message.author?.id.toInt64(),
-                        authorName: authorName,
-                        deletedAt: Int32(Date().timeIntervalSince1970),
-                        mediaKind: mediaKind
-                    )
-
-                    let attr = TeleFlowDeletedAttribute(
-                        deletedAt: snap.deletedAt,
-                        originalAuthorName: authorName
-                    )
-
+                    if message.attributes.contains(where: { $0 is TeleFlowDeletedAttribute }) { continue }
                     var attrs = message.attributes
-                    attrs.append(attr)
-
+                    attrs.append(TeleFlowDeletedAttribute(
+                        deletedAt: Int32(Date().timeIntervalSince1970),
+                        originalAuthorName: nil
+                    ))
                     transaction.updateMessage(messageId, update: { current in
-                        var updated = current
-                        updated.attributes = attrs
-                        return updated
+                        var u = current
+                        u.attributes = attrs
+                        return u
                     })
-
-                    self.markMessageAsDeleted(messageId: messageId, snapshot: snap)
                 }
-            }).start()
+            }).start(next: { [weak self] _ in
+                Queue.mainQueue().async { self?.refreshUI() }
+            })
         }
     }
 
@@ -127,58 +69,92 @@ public final class TeleFlowAntiDeleteService {
         )
     }
 
-    // MARK: - Private
+    // MARK: - UI refresh (без правки баблов)
 
-    private func markMessageAsDeleted(messageId: MessageId, snapshot: TeleFlowDeletedSnapshot) {
-        let key = self.storageKey(for: messageId)
-        if self.deletedMessageIds.contains(key) { return }
-        self.deletedMessageIds.insert(key)
-        self.snapshots[key] = snapshot
-        self.persistToDisk()
-    }
-
-    private func storageKey(for messageId: MessageId) -> String {
-        return "\(messageId.peerId.toInt64())_\(messageId.namespace)_\(messageId.id)"
-    }
-
-    private func loadFromDisk() {
-        if let stored = UserDefaults.standard.array(forKey: Self.deletedIdsKey) as? [String] {
-            self.deletedMessageIds = Set(stored)
+    private func refreshUI() {
+        guard TeleFlowSettings.shared.isAntiDeleteEnabled else {
+            // снять все надстройки, если выключили
+            self.walkBubbles { bubble in self.apply(bubble: bubble, deleted: false) }
+            return
         }
-        if let data = UserDefaults.standard.data(forKey: Self.snapshotsKey),
-           let decoded = try? JSONDecoder().decode([String: TeleFlowDeletedSnapshot].self, from: data) {
-            self.snapshots = decoded
+        self.walkBubbles { [weak self] bubble in
+            guard let self else { return }
+            let deleted = bubbleTeleFlowDeleted(bubble)
+            self.apply(bubble: bubble, deleted: deleted)
         }
     }
 
-    private func persistToDisk() {
-        let idsArray = Array(self.deletedMessageIds.suffix(3000))
-        UserDefaults.standard.set(idsArray, forKey: Self.deletedIdsKey)
-
-        if self.snapshots.count > 3000 {
-            let keepKeys = Set(self.deletedMessageIds.suffix(3000))
-            self.snapshots = self.snapshots.filter { keepKeys.contains($0.key) }
-        }
-        if let data = try? JSONEncoder().encode(self.snapshots) {
-            UserDefaults.standard.set(data, forKey: Self.snapshotsKey)
+    private func walkBubbles(_ action: @escaping (ASDisplayNode) -> Void) {
+        let windows = UIApplication.shared.windows
+        for window in windows {
+            walkView(window, action)
         }
     }
-}
 
-// MARK: - Snapshot
+    private func walkView(_ view: UIView, _ action: @escaping (ASDisplayNode) -> Void) {
+        if let node = view.asyncdisplaykit_node {
+            // фильтр по имени класса, чтобы не тянуть ChatMessageBubbleItemNode как тип
+            let className = String(describing: type(of: node))
+            if className.contains("ChatMessageBubbleItemNode") {
+                action(node)
+            }
+        }
+        for sub in view.subviews {
+            walkView(sub, action)
+        }
+    }
 
-public struct TeleFlowDeletedSnapshot: Codable {
-    public let peerId: Int64
-    public let namespace: Int32
-    public let messageId: Int32
-    public let timestamp: Int32
-    public let text: String
-    public let authorId: Int64?
-    public let authorName: String?
-    public let deletedAt: Int32
-    public let mediaKind: String?
-}
+    /// Проверяем атрибут через Postbox-транзакцию? Нет — данные уже в ноде. 
+    /// Читаем через KVC, чтобы не зависеть от типа ChatMessageBubbleItemNode.
+    private func bubbleTeleFlowDeleted(_ bubble: ASDisplayNode) -> Bool {
+        // ChatMessageBubbleItemNode имеет свойство item: ChatMessageItem
+        // ChatMessageItem.message: Message — читаем через KVC.
+        guard let item = bubble.value(forKey: "item") else { return false }
+        guard let message = (item as AnyObject).value(forKey: "message") else { return false }
+        guard let msg = message as? Message else { return false }
+        return msg.attributes.contains(where: { $0 is TeleFlowDeletedAttribute })
+    }
 
-public func messageContainsTeleFlowDeletionMarker(_ text: String) -> Bool {
-    return text.contains(TeleFlowAntiDeleteService.deletionMarkerText)
+    // MARK: - Apply
+
+    private func apply(bubble: ASDisplayNode, deleted: Bool) {
+        // 1) alpha
+        let newAlpha: CGFloat
+        if deleted && TeleFlowSettings.shared.isGrayOutDeletedEnabled {
+            newAlpha = CGFloat(TeleFlowSettings.shared.deletedOpacity)
+        } else {
+            newAlpha = 1.0
+        }
+        if abs(bubble.alpha - newAlpha) > 0.001 {
+            bubble.alpha = newAlpha
+        }
+
+        // 2) корзина
+        let trashName = "tfTrashNode"
+        var trash: ASImageNode? = bubble.subnodes?.first(where: { $0.name == trashName }) as? ASImageNode
+        if trash == nil {
+            let node = ASImageNode()
+            node.name = trashName
+            node.displaysAsynchronously = false
+            node.isUserInteractionEnabled = false
+            node.image = UIImage(systemName: "trash")?.withTintColor(.gray, renderingMode: .alwaysOriginal)
+            bubble.addSubnode(node)
+            trash = node
+        }
+        guard let trashNode = trash else { return }
+
+        let shouldShow = deleted && TeleFlowSettings.shared.isShowTrashIconEnabled
+        trashNode.isHidden = !shouldShow
+        if shouldShow {
+            let size = CGSize(width: 12, height: 12)
+            // в правом нижнем углу бабла — рядом с временем по вертикали
+            let b = bubble.bounds
+            trashNode.frame = CGRect(
+                x: b.width - size.width - 6,
+                y: b.height - size.height - 4,
+                width: size.width,
+                height: size.height
+            )
+        }
+    }
 }
