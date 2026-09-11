@@ -22,7 +22,6 @@ public final class TeleFlowSettings {
 
     // MARK: - Свойства
 
-    /// Анти-удаление сообщений.
     public var isAntiDeleteEnabled: Bool {
         get { userDefaults.bool(forKey: Keys.isAntiDeleteEnabled.rawValue) }
         set {
@@ -33,7 +32,6 @@ public final class TeleFlowSettings {
         }
     }
 
-    /// Скрытие рекламы.
     public var isHideAdsEnabled: Bool {
         get { userDefaults.bool(forKey: Keys.isHideAdsEnabled.rawValue) }
         set {
@@ -44,7 +42,6 @@ public final class TeleFlowSettings {
         }
     }
 
-    /// Скрытие историй.
     public var isHideStoriesEnabled: Bool {
         get { userDefaults.bool(forKey: Keys.isHideStoriesEnabled.rawValue) }
         set {
@@ -55,7 +52,6 @@ public final class TeleFlowSettings {
         }
     }
 
-    /// Приглушать удалённые сообщения (прозрачность/серость). По умолчанию ВКЛ.
     public var isGrayOutDeletedEnabled: Bool {
         get {
             if userDefaults.object(forKey: Keys.isGrayOutDeletedEnabled.rawValue) == nil { return true }
@@ -68,7 +64,6 @@ public final class TeleFlowSettings {
         }
     }
 
-    /// Показывать иконку корзины возле времени. По умолчанию ВКЛ.
     public var isShowTrashIconEnabled: Bool {
         get {
             if userDefaults.object(forKey: Keys.isShowTrashIconEnabled.rawValue) == nil { return true }
@@ -155,30 +150,6 @@ public extension TeleFlowSettings {
         return Signal<Bool, NoError> { subscriber in
             subscriber.putNext(self.isHideStoriesEnabled)
             let d = self.observeChanges { subscriber.putNext(self.isHideStoriesEnabled) }
-            return d
-        } |> runOn(.mainQueue())
-    }
-
-    var grayOutDeletedEnabledSignal: Signal<Bool, NoError> {
-        return Signal<Bool, NoError> { subscriber in
-            subscriber.putNext(self.isGrayOutDeletedEnabled)
-            let d = self.observeChanges { subscriber.putNext(self.isGrayOutDeletedEnabled) }
-            return d
-        } |> runOn(.mainQueue())
-    }
-
-    var showTrashIconEnabledSignal: Signal<Bool, NoError> {
-        return Signal<Bool, NoError> { subscriber in
-            subscriber.putNext(self.isShowTrashIconEnabled)
-            let d = self.observeChanges { subscriber.putNext(self.isShowTrashIconEnabled) }
-            return d
-        } |> runOn(.mainQueue())
-    }
-
-    var deletedOpacitySignal: Signal<Double, NoError> {
-        return Signal<Double, NoError> { subscriber in
-            subscriber.putNext(self.deletedOpacity)
-            let d = self.observeChanges { subscriber.putNext(self.deletedOpacity) }
             return d
         } |> runOn(.mainQueue())
     }
