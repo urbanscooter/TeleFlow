@@ -190,9 +190,6 @@ jobs:
           build --incompatible_disallow_struct_provider_syntax=false
           build --define=telegram_team_id=C67CF9S4VU
           build --define=team_id=C67CF9S4VU
-          build --define=AppIdentifierPrefix=C67CF9S4VU.
-          build --define=telegram_app_identifier_prefix=C67CF9S4VU.
-          build --define=app_identifier_prefix=C67CF9S4VU.
           build --define=telegram_bundle_id=ph.telegra.Telegraph
           EOF
 
