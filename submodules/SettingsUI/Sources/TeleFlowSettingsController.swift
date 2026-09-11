@@ -10,8 +10,6 @@ import ItemListUI
 import PresentationDataUtils
 import AccountContext
 
-// MARK: - Arguments
-
 private final class TeleFlowSettingsControllerArguments {
     let toggleAntiDelete: (Bool) -> Void
     let toggleGrayOut: (Bool) -> Void
@@ -37,25 +35,20 @@ private final class TeleFlowSettingsControllerArguments {
     }
 }
 
-// MARK: - Sections
-
 private enum TeleFlowSettingsSection: Int32 {
     case antiDelete
-    case antiDeleteOptions   // ← новые под-пункты
+    case antiDeleteOptions
     case other
 }
-
-// MARK: - Entries
 
 private enum TeleFlowSettingsEntry: ItemListNodeEntry {
     case antiDeleteHeader(String)
     case antiDelete(String, String, Bool)
     case antiDeleteInfo(String)
 
-    // Под-настройки (видны только при включённом анти-удалении)
     case optionsHeader(String)
     case grayOut(String, String, Bool)
-    case opacity(String, Int32, Int32, Int32)   // title, value, min, max
+    case opacity(String, Int32, Int32, Int32)
     case opacityInfo(String)
     case trashIcon(String, String, Bool)
 
@@ -215,8 +208,6 @@ private enum TeleFlowSettingsEntry: ItemListNodeEntry {
     }
 }
 
-// MARK: - State
-
 private struct TeleFlowSettingsState: Equatable {
     var isAntiDeleteEnabled: Bool
     var isGrayOutDeletedEnabled: Bool
@@ -226,15 +217,12 @@ private struct TeleFlowSettingsState: Equatable {
     var isHideStoriesEnabled: Bool
 }
 
-// MARK: - Entry builder (зависимая видимость)
-
 private func teleFlowSettingsEntries(
     state: TeleFlowSettingsState,
     presentationData: ItemListPresentationData
 ) -> [TeleFlowSettingsEntry] {
     var entries: [TeleFlowSettingsEntry] = []
 
-    // ─── Секция "Анти-удаление" ───
     entries.append(.antiDeleteHeader("Анти-удаление"))
     entries.append(.antiDelete(
         "Включить анти-удаление",
@@ -242,7 +230,6 @@ private func teleFlowSettingsEntries(
         state.isAntiDeleteEnabled))
     entries.append(.antiDeleteInfo("Удалённое сообщение останется в чате с пометкой"))
 
-    // ─── Под-настройки: только когда анти-удаление включено ───
     if state.isAntiDeleteEnabled {
         entries.append(.optionsHeader("Отображение удалённых"))
 
@@ -251,7 +238,6 @@ private func teleFlowSettingsEntries(
             "Понижать непрозрачность удалённых сообщений",
             state.isGrayOutDeletedEnabled))
 
-        // Слайдер непрозрачности (10..100 %)
         entries.append(.opacity(
             "Непрозрачность",
             Int32(state.deletedOpacity * 100.0),
@@ -265,7 +251,6 @@ private func teleFlowSettingsEntries(
             state.isShowTrashIconEnabled))
     }
 
-    // ─── Секция "Прочее" ───
     entries.append(.otherHeader("Прочее"))
     entries.append(.hideAds(
         "Скрыть рекламу",
@@ -281,8 +266,6 @@ private func teleFlowSettingsEntries(
 
     return entries
 }
-
-// MARK: - Factory
 
 public func makeTeleFlowSettingsController(context: AccountContext) -> ViewController {
     let stateValue = Atomic<TeleFlowSettingsState>(value: TeleFlowSettingsState(
@@ -305,11 +288,7 @@ public func makeTeleFlowSettingsController(context: AccountContext) -> ViewContr
         toggleAntiDelete: { newValue in
             TeleFlowSettings.shared.isAntiDeleteEnabled = newValue
             TeleFlowAntiDeleteService.shared.updateSettings(isEnabled: newValue)
-            updateState { s in
-                var s = s
-                s.isAntiDeleteEnabled = newValue
-                return s
-            }
+            updateState { s in var s = s; s.isAntiDeleteEnabled = newValue; return s }
         },
         toggleGrayOut: { newValue in
             TeleFlowSettings.shared.isGrayOutDeletedEnabled = newValue
