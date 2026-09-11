@@ -191,9 +191,9 @@ jobs:
           cat << 'EOF' >> .bazelrc
           startup --host_jvm_args=-Xmx4g
           startup --host_jvm_args=-Xms2g
-          build --local_resources=memory=9216
+          build --local_resources=memory=6144
           build --local_resources=cpu=3
-          build --jobs=3
+          build --jobs=5
           build --strategy=SwiftCompile=standalone
           build --incompatible_disallow_struct_provider_syntax=false
           build --define=telegram_team_id=C67CF9S4VU
