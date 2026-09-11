@@ -7,6 +7,10 @@ public final class TeleFlowAntiDeleteService {
     public static let shared = TeleFlowAntiDeleteService()
 
     public static let deletionMarkerText: String = "Удалено"
+
+    // ← ДОБАВЛЕНО: имя нотификации, которое ждёт AppDelegate.swift
+    public static let accountReadyNotification = Notification.Name("TeleFlowAntiDeleteService.accountReady")
+
     private static let deletedMessagesKey = "TeleFlow_DeletedMessageIds_v1"
 
     private let queue = Queue()
@@ -46,6 +50,16 @@ public final class TeleFlowAntiDeleteService {
                 }
             }).start(next: { _ in })
         }
+    }
+
+    // ← ДОБАВЛЕНО: публичный способ сказать "аккаунт готов",
+    // чтобы AppDelegate мог подписаться через эту нотификацию.
+    public func notifyAccountReady(account: Account) {
+        NotificationCenter.default.post(
+            name: TeleFlowAntiDeleteService.accountReadyNotification,
+            object: nil,
+            userInfo: ["account": account]
+        )
     }
 
     private func markMessageAsDeleted(messageId: MessageId) {
