@@ -10,6 +10,8 @@ import ItemListUI
 import PresentationDataUtils
 import AccountContext
 
+// MARK: - Arguments
+
 private final class TeleFlowSettingsControllerArguments {
     let toggleAntiDelete: (Bool) -> Void
     let toggleGrayOut: (Bool) -> Void
@@ -35,11 +37,15 @@ private final class TeleFlowSettingsControllerArguments {
     }
 }
 
+// MARK: - Sections
+
 private enum TeleFlowSettingsSection: Int32 {
     case antiDelete
     case antiDeleteOptions
     case other
 }
+
+// MARK: - Entries
 
 private enum TeleFlowSettingsEntry: ItemListNodeEntry {
     case antiDeleteHeader(String)
@@ -48,7 +54,7 @@ private enum TeleFlowSettingsEntry: ItemListNodeEntry {
 
     case optionsHeader(String)
     case grayOut(String, String, Bool)
-    case opacity(String, Int32, Int32, Int32)
+    case opacity(String, Int32)
     case opacityInfo(String)
     case trashIcon(String, String, Bool)
 
@@ -89,19 +95,32 @@ private enum TeleFlowSettingsEntry: ItemListNodeEntry {
 
     static func ==(lhs: TeleFlowSettingsEntry, rhs: TeleFlowSettingsEntry) -> Bool {
         switch lhs {
-        case let .antiDeleteHeader(l): if case let .antiDeleteHeader(r) = rhs { return l == r }; return false
-        case let .antiDelete(lt, ls, lv): if case let .antiDelete(rt, rs, rv) = rhs { return lt == rt && ls == rs && lv == rv }; return false
-        case let .antiDeleteInfo(l): if case let .antiDeleteInfo(r) = rhs { return l == r }; return false
-        case let .optionsHeader(l): if case let .optionsHeader(r) = rhs { return l == r }; return false
-        case let .grayOut(lt, ls, lv): if case let .grayOut(rt, rs, rv) = rhs { return lt == rt && ls == rs && lv == rv }; return false
-        case let .opacity(lt, lv, lmin, lmax): if case let .opacity(rt, rv, rmin, rmax) = rhs { return lt == rt && lv == rv && lmin == rmin && lmax == rmax }; return false
-        case let .opacityInfo(l): if case let .opacityInfo(r) = rhs { return l == r }; return false
-        case let .trashIcon(lt, ls, lv): if case let .trashIcon(rt, rs, rv) = rhs { return lt == rt && ls == rs && lv == rv }; return false
-        case let .otherHeader(l): if case let .otherHeader(r) = rhs { return l == r }; return false
-        case let .hideAds(lt, ls, lv): if case let .hideAds(rt, rs, rv) = rhs { return lt == rt && ls == rs && lv == rv }; return false
-        case let .hideAdsInfo(l): if case let .hideAdsInfo(r) = rhs { return l == r }; return false
-        case let .hideStories(lt, ls, lv): if case let .hideStories(rt, rs, rv) = rhs { return lt == rt && ls == rs && lv == rv }; return false
-        case let .hideStoriesInfo(l): if case let .hideStoriesInfo(r) = rhs { return l == r }; return false
+        case let .antiDeleteHeader(l):
+            if case let .antiDeleteHeader(r) = rhs { return l == r }; return false
+        case let .antiDelete(lt, ls, lv):
+            if case let .antiDelete(rt, rs, rv) = rhs { return lt == rt && ls == rs && lv == rv }; return false
+        case let .antiDeleteInfo(l):
+            if case let .antiDeleteInfo(r) = rhs { return l == r }; return false
+        case let .optionsHeader(l):
+            if case let .optionsHeader(r) = rhs { return l == r }; return false
+        case let .grayOut(lt, ls, lv):
+            if case let .grayOut(rt, rs, rv) = rhs { return lt == rt && ls == rs && lv == rv }; return false
+        case let .opacity(lt, lv):
+            if case let .opacity(rt, rv) = rhs { return lt == rt && lv == rv }; return false
+        case let .opacityInfo(l):
+            if case let .opacityInfo(r) = rhs { return l == r }; return false
+        case let .trashIcon(lt, ls, lv):
+            if case let .trashIcon(rt, rs, rv) = rhs { return lt == rt && ls == rs && lv == rv }; return false
+        case let .otherHeader(l):
+            if case let .otherHeader(r) = rhs { return l == r }; return false
+        case let .hideAds(lt, ls, lv):
+            if case let .hideAds(rt, rs, rv) = rhs { return lt == rt && ls == rs && lv == rv }; return false
+        case let .hideAdsInfo(l):
+            if case let .hideAdsInfo(r) = rhs { return l == r }; return false
+        case let .hideStories(lt, ls, lv):
+            if case let .hideStories(rt, rs, rv) = rhs { return lt == rt && ls == rs && lv == rv }; return false
+        case let .hideStoriesInfo(l):
+            if case let .hideStoriesInfo(r) = rhs { return l == r }; return false
         }
     }
 
@@ -145,16 +164,23 @@ private enum TeleFlowSettingsEntry: ItemListNodeEntry {
                 updated: { v in a.toggleGrayOut(v) }
             )
 
-        case let .opacity(title, value, min, max):
-            return ItemListSliderItem(
+        case let .opacity(title, value):
+            return ItemListDisclosureItem(
                 presentationData: presentationData,
                 title: title,
-                value: value,
-                minValue: min,
-                maxValue: max,
+                label: "\(value)%",
                 sectionId: self.section,
                 style: .blocks,
-                updated: { v in a.updateOpacity(v) }
+                action: {
+                    let steps: [Int32] = [25, 40, 55, 75, 100]
+                    let next: Int32
+                    if let idx = steps.firstIndex(of: value) {
+                        next = steps[(idx + 1) % steps.count]
+                    } else {
+                        next = 55
+                    }
+                    a.updateOpacity(next)
+                }
             )
 
         case let .opacityInfo(text):
@@ -208,6 +234,8 @@ private enum TeleFlowSettingsEntry: ItemListNodeEntry {
     }
 }
 
+// MARK: - State
+
 private struct TeleFlowSettingsState: Equatable {
     var isAntiDeleteEnabled: Bool
     var isGrayOutDeletedEnabled: Bool
@@ -216,6 +244,8 @@ private struct TeleFlowSettingsState: Equatable {
     var isHideAdsEnabled: Bool
     var isHideStoriesEnabled: Bool
 }
+
+// MARK: - Entries builder
 
 private func teleFlowSettingsEntries(
     state: TeleFlowSettingsState,
@@ -240,10 +270,8 @@ private func teleFlowSettingsEntries(
 
         entries.append(.opacity(
             "Непрозрачность",
-            Int32(state.deletedOpacity * 100.0),
-            10,
-            100))
-        entries.append(.opacityInfo("10% — почти прозрачно, 100% — без изменений"))
+            Int32(state.deletedOpacity * 100.0)))
+        entries.append(.opacityInfo("Нажмите чтобы переключить: 25% → 40% → 55% → 75% → 100%"))
 
         entries.append(.trashIcon(
             "Иконка корзины",
@@ -267,6 +295,8 @@ private func teleFlowSettingsEntries(
     return entries
 }
 
+// MARK: - Factory
+
 public func makeTeleFlowSettingsController(context: AccountContext) -> ViewController {
     let stateValue = Atomic<TeleFlowSettingsState>(value: TeleFlowSettingsState(
         isAntiDeleteEnabled: TeleFlowSettings.shared.isAntiDeleteEnabled,
@@ -287,7 +317,6 @@ public func makeTeleFlowSettingsController(context: AccountContext) -> ViewContr
     let arguments = TeleFlowSettingsControllerArguments(
         toggleAntiDelete: { newValue in
             TeleFlowSettings.shared.isAntiDeleteEnabled = newValue
-            TeleFlowAntiDeleteService.shared.updateSettings(isEnabled: newValue)
             updateState { s in var s = s; s.isAntiDeleteEnabled = newValue; return s }
         },
         toggleGrayOut: { newValue in
