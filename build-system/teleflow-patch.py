@@ -1,7 +1,25 @@
 #!/usr/bin/env python3
 """
-TeleFlow auto-patcher: встраивает хук анти-удаления в пайплайн TelegramCore.
-Идемпотентный — можно запускать сколько угодно раз, повторно не патчит.
+TeleFlow auto-patcher: заменяет блок удаления сообщений в TelegramCore
+на вызов TeleFlowAntiDeleteService.handleIncomingMessageDeletions(account:messageIds:).
+
+Что делаем:
+  было:
+      let _ = (account.postbox.transaction { transaction -> Void in
+          for id in messageIds {
+              transaction.removeMessage(id)
+          }
+      }).start()
+
+  стало:
+      // TeleFlow: patched
+      TeleFlowAntiDeleteService.shared.handleIncomingMessageDeletions(account: account, messageIds: messageIds)
+
+Теперь сервис сам решает: если анти-удаление включено — помечает сообщения,
+не удаляя их из постбокса (бабл остаётся видимым); если выключено — удаляет штатно.
+
+Идемпотентный: повторный запуск ничего не делает (проверяет MARKER).
+Патчится ТОЛЬКО cloud-вариант (там, где цикл идёт по `messageIds`).
 """
 import os
 import re
@@ -9,29 +27,53 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Файлы, где ищем точку удаления (по приоритету)
+# Файлы-кандидаты (по приоритету)
 CANDIDATES = [
     "submodules/TelegramCore/Sources/State/CloudChatRemoveMessagesOperation.swift",
     "submodules/TelegramCore/Sources/State/ManagedCloudChatRemoveMessagesOperations.swift",
 ]
 
-INJECT_MARKER = "// TeleFlow: hook injected"
-INJECT_LINE = "        TeleFlowAntiDeleteService.shared.handleIncomingMessageDeletions(account: account, messageIds: messageIds)\n"
-CALL_PATTERN = re.compile(r"transaction\.removeMessage\(")
-LOOP_PATTERN = re.compile(r"for\s+(\w+)\s+in\s+(\w+)\s*\{")
+MARKER = "// TeleFlow: patched"
+
+REPLACEMENT_TEMPLATE = (
+    "{indent}// TeleFlow: patched\n"
+    "{indent}TeleFlowAntiDeleteService.shared.handleIncomingMessageDeletions("
+    "account: account, messageIds: messageIds)\n"
+)
+
+# Матчим весь блок:
+#   let _ = (account.postbox.transaction { ... }).start()
+# `.*?` не-жадный, но так как `.start()` встречается только на закрытии
+# транзакции, этого достаточно. Внутренние `}` цикла `for` не помешают,
+# потому что после них идёт `}`, а не `}).start()`.
+BLOCK_PATTERN = re.compile(
+    r"(?P<indent>[ \t]*)let\s+_\s*=\s*\(\s*account\.postbox\.transaction\s*\{"
+    r".*?"
+    r"\}\s*\)\s*\.start\s*\(\s*\)",
+    re.DOTALL,
+)
+
+# Признаки именно cloud-варианта:
+LOOP_OVER_MESSAGE_IDS = re.compile(r"\bfor\s+\w+\s+in\s+messageIds\b")
+HAS_REMOVE_CALL = re.compile(r"\btransaction\.removeMessage\s*\(")
 
 
 def find_target_file():
+    """Возвращает (path, content) первого файла, где найден cloud-блок."""
     for rel in CANDIDATES:
         path = os.path.join(ROOT, rel)
-        if os.path.isfile(path):
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
-            if CALL_PATTERN.search(content):
-                return path, content
+        if not os.path.isfile(path):
+            continue
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        if LOOP_OVER_MESSAGE_IDS.search(content) and HAS_REMOVE_CALL.search(content):
+            return path, content
+
     # Резервный поиск по всему TelegramCore
-    state_dir = os.path.join(ROOT, "submodules/TelegramCore/Sources")
-    for dirpath, _, filenames in os.walk(state_dir):
+    sources_dir = os.path.join(ROOT, "submodules/TelegramCore/Sources")
+    if not os.path.isdir(sources_dir):
+        return None, None
+    for dirpath, _, filenames in os.walk(sources_dir):
         for name in filenames:
             if not name.endswith(".swift"):
                 continue
@@ -41,63 +83,48 @@ def find_target_file():
                     content = f.read()
             except Exception:
                 continue
-            if CALL_PATTERN.search(content) and "messageIds" in content:
+            if LOOP_OVER_MESSAGE_IDS.search(content) and HAS_REMOVE_CALL.search(content):
                 return path, content
     return None, None
 
 
-def inject(content):
-    if INJECT_MARKER in content:
+def patch(content):
+    """Возвращает (new_content, status)."""
+    if MARKER in content:
         return content, "already-patched"
 
-    lines = content.split("\n")
-    out = []
-    injected = False
-    last_loop_var = None
-    last_loop_collection = None
+    replaced = {"count": 0}
 
-    for line in lines:
-        # Запоминаем переменные цикла — вдруг понадобится
-        m = LOOP_PATTERN.search(line)
-        if m:
-            last_loop_var = m.group(1)
-            last_loop_collection = m.group(2)
+    def repl(match):
+        block = match.group(0)
+        # Трогаем только cloud-вариант: цикл по messageIds + removeMessage.
+        if not (LOOP_OVER_MESSAGE_IDS.search(block) and HAS_REMOVE_CALL.search(block)):
+            return block  # чужой removeMessage (secret chat и т.п.) — не трогаем
+        replaced["count"] += 1
+        return REPLACEMENT_TEMPLATE.format(indent=match.group("indent"))
 
-        # Точка вставки — первая строка с transaction.removeMessage
-        if not injected and CALL_PATTERN.search(line):
-            indent = len(line) - len(line.lstrip())
-            indent_str = " " * indent
-            # Используем массив messageIds, если он доступен; иначе [<loop_var>]
-            if "messageIds" in content or (last_loop_collection and last_loop_collection != "messageIds"):
-                payload = f"{indent_str}{INJECT_MARKER}\n{indent_str}TeleFlowAntiDeleteService.shared.handleIncomingMessageDeletions(account: account, messageIds: messageIds)\n"
-            else:
-                lv = last_loop_var or "id"
-                payload = f"{indent_str}{INJECT_MARKER}\n{indent_str}TeleFlowAntiDeleteService.shared.handleIncomingMessageDeletions(account: account, messageIds: [{lv}])\n"
-            out.append(payload.rstrip("\n"))
-            injected = True
-        out.append(line)
+    new_content = BLOCK_PATTERN.sub(repl, content)
 
-    if not injected:
+    if replaced["count"] == 0:
         return content, "no-injection-point"
-
-    return "\n".join(out), "patched"
+    return new_content, "patched"
 
 
 def main():
     path, content = find_target_file()
     if path is None:
-        print("TeleFlow patch: target file not found")
-        sys.exit(1)
+        print("TeleFlow patch: target file not found — skipping (submodules may not be synced)")
+        sys.exit(0)
 
-    new_content, status = inject(content)
+    new_content, status = patch(content)
     if status == "already-patched":
         print(f"TeleFlow patch: already patched ({os.path.relpath(path, ROOT)})")
         return
     if status == "no-injection-point":
-        print(f"TeleFlow patch: no injection point in {os.path.relpath(path, ROOT)}")
-        sys.exit(1)
+        print(f"TeleFlow patch: no cloud-removal block matched in {os.path.relpath(path, ROOT)} — skipping")
+        sys.exit(0)
 
-    # Бэкап
+    # Бэкап (один раз)
     backup = path + ".teleflow-bak"
     if not os.path.exists(backup):
         with open(backup, "w", encoding="utf-8") as f:
