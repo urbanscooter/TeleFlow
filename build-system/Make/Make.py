@@ -536,6 +536,25 @@ def resolve_configuration(base_path, bazel_command_line: BazelCommandLine, argum
         file.write('])\n')
 
 
+# >>> TeleFlow patch <<<
+def run_teleflow_patch(base_path):
+    """Run the TeleFlow anti-delete patcher before build/project generation.
+
+    The patcher (build-system/teleflow-patch.py) is idempotent — it locates the
+    target Swift file itself and checks for its own marker before injecting. If
+    the patcher is missing, this is a no-op so that builds still work for
+    people who don't use TeleFlow.
+    """
+    patcher_path = os.path.join(base_path, 'build-system', 'teleflow-patch.py')
+    if not os.path.exists(patcher_path):
+        print('TelegramBuild: teleflow-patch.py not found at {}, skipping patch step'.format(patcher_path))
+        return
+
+    print('TelegramBuild: running TeleFlow patcher: {}'.format(patcher_path))
+    call_executable([sys.executable, patcher_path])
+# <<< TeleFlow patch <<<
+
+
 def generate_project(bazel, arguments):
     bazel_command_line = BazelCommandLine(
         bazel=bazel,
@@ -557,6 +576,10 @@ def generate_project(bazel, arguments):
         arguments=arguments,
         additional_codesigning_output_path=None
     )
+
+    # >>> TeleFlow patch <<<
+    run_teleflow_patch(base_path=os.getcwd())
+    # <<< TeleFlow patch <<<
 
     bazel_command_line.set_build_number(arguments.buildNumber)
 
@@ -677,6 +700,10 @@ def build(bazel, arguments):
         arguments=arguments,
         additional_codesigning_output_path=None
     )
+
+    # >>> TeleFlow patch <<<
+    run_teleflow_patch(base_path=os.getcwd())
+    # <<< TeleFlow patch <<<
 
     bazel_command_line.set_configuration(arguments.configuration)
     if arguments.embedWatchApp:
@@ -1412,7 +1439,11 @@ if __name__ == '__main__':
                 arguments=args,
                 additional_codesigning_output_path=remote_input_path
             )
-            
+
+            # >>> TeleFlow patch <<<
+            run_teleflow_patch(base_path=os.getcwd())
+            # <<< TeleFlow patch <<<
+
             shutil.copyfile(args.configurationPath, remote_input_path + '/configuration.json')
 
             watch_provisioning_profile_remote_path = None
@@ -1454,7 +1485,11 @@ if __name__ == '__main__':
                 arguments=args,
                 additional_codesigning_output_path=remote_input_path
             )
-            
+
+            # >>> TeleFlow patch <<<
+            run_teleflow_patch(base_path=os.getcwd())
+            # <<< TeleFlow patch <<<
+
             shutil.copyfile(args.configurationPath, remote_input_path + '/configuration.json')
 
             TartBuild.remote_build_tart(
