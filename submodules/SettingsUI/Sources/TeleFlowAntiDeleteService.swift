@@ -1,50 +1,10 @@
 import Foundation
 import UIKit
 import Postbox
+import TelegramCore
+import AsyncDisplayKit
+import Display
 import SwiftSignalKit
-
-// MARK: - Attribute (встроен, не требует declareEncodable в Coding.swift)
-
-public final class TeleFlowDeletedAttribute: MessageAttribute {
-    public let deletedAt: Int32
-    public let originalAuthorName: String?
-
-    public init(deletedAt: Int32, originalAuthorName: String?) {
-        self.deletedAt = deletedAt
-        self.originalAuthorName = originalAuthorName
-    }
-
-    public init(decoder: PostboxDecoder) {
-        self.deletedAt = decoder.decodeInt32ForKey("d", orElse: 0)
-        self.originalAuthorName = decoder.decodeOptionalStringForKey("a")
-    }
-
-    public func encode(_ encoder: PostboxEncoder) {
-        encoder.encodeInt32(self.deletedAt, forKey: "d")
-        if let n = self.originalAuthorName {
-            encoder.encodeString(n, forKey: "a")
-        } else {
-            encoder.encodeNil(forKey: "a")
-        }
-    }
-
-    public var associatedPeerIds: [PeerId] { return [] }
-    public var associatedMessageIds: [MessageId] { return [] }
-}
-
-public extension Message {
-    var teleFlowIsDeleted: Bool {
-        return self.attributes.contains(where: { $0 is TeleFlowDeletedAttribute })
-    }
-}
-
-public extension EngineMessage {
-    var teleFlowIsDeleted: Bool {
-        return (self._asMessage()).teleFlowIsDeleted
-    }
-}
-
-// MARK: - Service
 
 public final class TeleFlowAntiDeleteService {
     public static let shared = TeleFlowAntiDeleteService()
@@ -58,25 +18,27 @@ public final class TeleFlowAntiDeleteService {
     private var refreshTimer: SwiftSignalKit.Timer?
 
     private init() {
-        // Шаг 2: регистрация атрибута в Postbox — один раз при инициализации.
-        declareEncodable(TeleFlowDeletedAttribute.self, 0x7a3e0001)
+        // Регистрация атрибута в Postbox (правильный синтаксис с label 'f:')
+        declareEncodable(TeleFlowDeletedAttribute.self, f: { decoder in
+            return TeleFlowDeletedAttribute(decoder: decoder)
+        })
 
-        // Периодический обход видимых баблов (раз в секунду).
         self.refreshTimer = SwiftSignalKit.Timer(timeout: 1.0, repeat: true, completion: { [weak self] in
             self?.refreshUI()
         }, queue: .mainQueue())
         self.refreshTimer?.start()
 
-        // Реагируем на смену настроек мгновенно.
         NotificationCenter.default.addObserver(
             forName: Notification.Name("TeleFlowSettingsDidChange"),
             object: nil,
             queue: .main,
-            using: { [weak self] _ in self?.refreshUI() }
+            using: { [weak self] _ in
+                self?.refreshUI()
+            }
         )
     }
 
-    // MARK: - Settings reading (напрямую из UserDefaults, без зависимостей)
+    // MARK: - Settings reading
 
     private var isAntiDeleteEnabled: Bool {
         return UserDefaults(suiteName: Self.suiteName)?.bool(forKey: "isAntiDeleteEnabled") ?? false
@@ -98,7 +60,14 @@ public final class TeleFlowAntiDeleteService {
         return min(1.0, max(0.1, v))
     }
 
-    // MARK: - Delete hook (Шаг 1: вызывать ПЕРЕД transaction.removeMessage)
+    // MARK: - Compatibility (для контроллера)
+
+    public func updateSettings(isEnabled: Bool) {
+        // Настройки читаются из UserDefaults каждый раз — тут ничего не нужно.
+        self.refreshUI()
+    }
+
+    // MARK: - Delete hook (Шаг 1 — вызывается ПЕРЕД transaction.removeMessage)
 
     public func handleIncomingMessageDeletions(account: Account, messageIds: [MessageId]) {
         guard !messageIds.isEmpty, self.isAntiDeleteEnabled else { return }
@@ -117,8 +86,10 @@ public final class TeleFlowAntiDeleteService {
                     return u
                 })
             }
-        }).start(next: { [weak self] _ in
-            Queue.mainQueue().async { self?.refreshUI() }
+        }).start(next: { [weak self] (_: Void) in
+            Queue.mainQueue().async {
+                self?.refreshUI()
+            }
         })
     }
 
@@ -134,7 +105,7 @@ public final class TeleFlowAntiDeleteService {
 
     private func refreshUI() {
         let enabled = self.isAntiDeleteEnabled
-        self.walkBubbles { [weak self] bubble in
+        self.walkBubbles { [weak self] (bubble: ASDisplayNode) in
             guard let self else { return }
             let deleted = enabled && self.bubbleTeleFlowDeleted(bubble)
             self.apply(bubble: bubble, deleted: deleted)
@@ -163,11 +134,10 @@ public final class TeleFlowAntiDeleteService {
         guard let itemAny = bubble.value(forKey: "item") else { return false }
         guard let messageAny = (itemAny as AnyObject).value(forKey: "message") else { return false }
         guard let message = messageAny as? Message else { return false }
-        return message.teleFlowIsDeleted
+        return message.attributes.contains(where: { $0 is TeleFlowDeletedAttribute })
     }
 
     private func apply(bubble: ASDisplayNode, deleted: Bool) {
-        // alpha
         let newAlpha: CGFloat = (deleted && self.isGrayOutEnabled)
             ? CGFloat(self.deletedOpacity)
             : 1.0
@@ -175,7 +145,6 @@ public final class TeleFlowAntiDeleteService {
             bubble.alpha = newAlpha
         }
 
-        // корзина (SF Symbol, без ресурсов)
         var trash: ASImageNode? = bubble.subnodes?.first(where: { $0.name == self.trashNodeName }) as? ASImageNode
         if trash == nil {
             let node = ASImageNode()
