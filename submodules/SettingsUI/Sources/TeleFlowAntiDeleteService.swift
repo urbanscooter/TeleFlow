@@ -59,7 +59,7 @@ public final class TeleFlowAntiDeleteService {
         return min(1.0, max(0.1, v))
     }
 
-    // MARK: - Deletion marker (UserDefaults-set)
+    // MARK: - Deletion marker
 
     private func key(for id: MessageId) -> String {
         return "\(id.peerId.toInt64())_\(id.namespace)_\(id.id)"
@@ -82,11 +82,10 @@ public final class TeleFlowAntiDeleteService {
         UserDefaults(suiteName: Self.suiteName)?.set(arr, forKey: Self.deletedIdsKey)
     }
 
-    // MARK: - Delete hook
+    // MARK: - Delete hook (вызывается из патченного пайплайна)
 
-    /// Вызывается ИЗ ПАЙПЛАЙНА УДАЛЕНИЯ ВМЕСТО `transaction.removeMessage(...)`.
-    /// Если анти-удаление включено — сообщение НЕ удаляется из postbox, только помечается.
-    /// Если выключено — удаляется штатно.
+    /// Если анти-удаление включено — сообщение НЕ удаляем, только помечаем.
+    /// Если выключено — удаляем штатно.
     public func handleIncomingMessageDeletions(account: Account, messageIds: [MessageId]) {
         guard !messageIds.isEmpty else { return }
 
@@ -161,7 +160,6 @@ public final class TeleFlowAntiDeleteService {
     }
 
     private func apply(bubble: ASDisplayNode, deleted: Bool) {
-        // 1) Прозрачность
         let newAlpha: CGFloat = (deleted && self.isGrayOutEnabled)
             ? CGFloat(self.deletedOpacity)
             : 1.0
@@ -169,7 +167,6 @@ public final class TeleFlowAntiDeleteService {
             bubble.alpha = newAlpha
         }
 
-        // 2) Иконка корзины (хранится в словаре по ObjectIdentifier)
         let oid = ObjectIdentifier(bubble)
         var trash = self.trashNodes[oid]
         if trash == nil {
