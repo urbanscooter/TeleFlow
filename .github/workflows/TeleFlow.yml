@@ -26,7 +26,7 @@ jobs:
           cp -R $GITHUB_WORKSPACE /Users/Shared/
           mv /Users/Shared/$(basename $GITHUB_WORKSPACE) /Users/Shared/telegram-ios
 
-      - name: Create TeleFlow Module and Apply Patches
+            - name: Create TeleFlow Module and Apply Patches
         run: |
           set -x
           SOURCE_DIR=/Users/Shared/telegram-ios
@@ -91,24 +91,65 @@ jobs:
           SWIFTEOF
 
           echo "=== Файлы модуля созданы ==="
-          ls -la TeleFlowModule/
-          ls -la TeleFlowModule/Sources/
 
-          echo "=== Поиск главного BUILD ==="
-          find . -maxdepth 2 -name "BUILD" -path "*Telegram*" 2>/dev/null | head -10
+          echo "=== Подключаем модуль к главному таргету Swiftgram ==="
+          python3 - << 'PYEOF'
+          import re
 
-          MAIN_BUILD_FILE="Telegram/BUILD"
-          if [ ! -f "$MAIN_BUILD_FILE" ]; then
-            MAIN_BUILD_FILE=$(find . -maxdepth 2 -name "BUILD" -path "*Telegram*" 2>/dev/null | head -1)
-          fi
-          echo "MAIN_BUILD_FILE=$MAIN_BUILD_FILE"
+          build_file = "Telegram/BUILD"
+          with open(build_file, "r") as f:
+              content = f.read()
 
-          if [ -n "$MAIN_BUILD_FILE" ] && [ -f "$MAIN_BUILD_FILE" ]; then
-            if ! grep -q "//TeleFlowModule:TeleFlow" "$MAIN_BUILD_FILE"; then
-              perl -i -pe 's/^(\s*)deps = \[/$1deps = [\n$1    "\/\/TeleFlowModule:TeleFlow",/' "$MAIN_BUILD_FILE"
-              echo "=== Модуль подключён ==="
-            fi
-          fi
+          # Ищем блок таргета с name = "Swiftgram"
+          # Добавляем нашу зависимость в его deps
+          lines = content.split("\n")
+          target_start = None
+          target_end = None
+
+          for i, line in enumerate(lines):
+              if re.search(r'name\s*=\s*"Swiftgram"', line):
+                  target_start = i
+                  break
+
+          if target_start is None:
+              print("Не нашли таргет Swiftgram, ищем Telegram...")
+              for i, line in enumerate(lines):
+                  if re.search(r'name\s*=\s*"Telegram"', line):
+                      target_start = i
+                      break
+
+          if target_start is None:
+              print("Не нашли главный таргет вообще")
+              exit(1)
+
+          # Находим deps = [ после target_start
+          deps_line = None
+          for j in range(target_start, len(lines)):
+              if 'deps = [' in lines[j]:
+                  deps_line = j
+                  break
+              # если встретили закрывающую скобку раньше deps — выходим
+              if lines[j].strip() == ')' and j > target_start:
+                  break
+
+          if deps_line is None:
+              print("Не нашли deps в таргете Swiftgram")
+              exit(1)
+
+          # Проверяем, что нашей зависимости ещё нет
+          if any('//TeleFlowModule:TeleFlow' in l for l in lines):
+              print("Зависимость уже есть, пропускаем")
+          else:
+              lines.insert(deps_line + 1, '        "//TeleFlowModule:TeleFlow",')
+              with open(build_file, "w") as f:
+                  f.write("\n".join(lines))
+              print("Зависимость //TeleFlowModule:TeleFlow добавлена в таргет Swiftgram")
+
+          # Показываем контекст
+          print("Контекст:")
+          for i in range(max(0, target_start-2), min(len(lines), target_start+30)):
+              print(lines[i])
+          PYEOF
 
           PATCH_FILE_AD="submodules/TelegramCore/Sources/TelegramEngine/Messages/AdMessages.swift"
           if [ -f "$PATCH_FILE_AD" ]; then
