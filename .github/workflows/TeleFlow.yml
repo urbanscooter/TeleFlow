@@ -32,6 +32,7 @@ jobs:
           SOURCE_DIR=/Users/Shared/telegram-ios
           cd $SOURCE_DIR
 
+          # 1. Создаём структуру модуля
           mkdir -p TeleFlowModule/Sources
 
           cat > TeleFlowModule/BUILD << 'BUILDEOF'
@@ -90,24 +91,48 @@ jobs:
           }
           SWIFTEOF
 
-          MAIN_BUILD_FILE=$(grep -rl 'name = "Telegram"' --include="BUILD" . | head -1)
-          if [ -n "$MAIN_BUILD_FILE" ]; then
-            sed -i '/deps = \[/a\        "//TeleFlowModule:TeleFlow",' "$MAIN_BUILD_FILE"
+          echo "=== Файлы модуля созданы: ==="
+          ls -la TeleFlowModule/
+          ls -la TeleFlowModule/Sources/
+
+          # 2. Ищем главный BUILD файл приложения (Telegram/BUILD)
+          echo "=== Поиск главного BUILD ==="
+          find . -maxdepth 2 -name "BUILD" -path "*Telegram*" 2>/dev/null | head -10
+
+          MAIN_BUILD_FILE="Telegram/BUILD"
+          if [ ! -f "$MAIN_BUILD_FILE" ]; then
+            MAIN_BUILD_FILE=$(find . -maxdepth 2 -name "BUILD" -path "*Telegram*" 2>/dev/null | head -1)
+          fi
+          echo "MAIN_BUILD_FILE=$MAIN_BUILD_FILE"
+
+          if [ -n "$MAIN_BUILD_FILE" ] && [ -f "$MAIN_BUILD_FILE" ]; then
+            if ! grep -q "//TeleFlowModule:TeleFlow" "$MAIN_BUILD_FILE"; then
+              # Используем perl вместо sed — он одинаковый на macOS и Linux
+              perl -i -pe 's/^(\s*)deps = \[/$1deps = [\n$1    "\/\/TeleFlowModule:TeleFlow",/' "$MAIN_BUILD_FILE"
+              echo "=== Модуль подключён к $MAIN_BUILD_FILE ==="
+              grep -A 5 "deps = \[" "$MAIN_BUILD_FILE" | head -10
+            fi
           fi
 
+          # 3. Патч для скрытия рекламы (используем perl!)
           PATCH_FILE_AD="submodules/TelegramCore/Sources/TelegramEngine/Messages/AdMessages.swift"
           if [ -f "$PATCH_FILE_AD" ]; then
-            grep -q "teleflow.hideAds" "$PATCH_FILE_AD" || \
-            sed -i 's/let (postsBetween, startDelay, betweenDelay, messages, chats, users) = (sponsoredMessagesData.postsBetween, sponsoredMessagesData.startDelay, sponsoredMessagesData.betweenDelay, sponsoredMessagesData.messages, sponsoredMessagesData.chats, sponsoredMessagesData.users)/if TeleFlowManager.shared.hideAds { continue }\n                        let (postsBetween, startDelay, betweenDelay, messages, chats, users) = (sponsoredMessagesData.postsBetween, sponsoredMessagesData.startDelay, sponsoredMessagesData.betweenDelay, sponsoredMessagesData.messages, sponsoredMessagesData.chats, sponsoredMessagesData.users)/' "$PATCH_FILE_AD"
+            if ! grep -q "teleflow.hideAds" "$PATCH_FILE_AD"; then
+              perl -i -pe 's/let \(postsBetween, startDelay, betweenDelay, messages, chats, users\) = \(sponsoredMessagesData\.postsBetween, sponsoredMessagesData\.startDelay, sponsoredMessagesData\.betweenDelay, sponsoredMessagesData\.messages, sponsoredMessagesData\.chats, sponsoredMessagesData\.users\)/if TeleFlowManager.shared.hideAds { continue }\n                        let (postsBetween, startDelay, betweenDelay, messages, chats, users) = (sponsoredMessagesData.postsBetween, sponsoredMessagesData.startDelay, sponsoredMessagesData.betweenDelay, sponsoredMessagesData.messages, sponsoredMessagesData.chats, sponsoredMessagesData.users)/' "$PATCH_FILE_AD"
+              echo "=== Патч рекламы применён ==="
+            fi
           fi
 
+          # 4. Патч для антиудаления (используем perl!)
           PATCH_FILE_PB="submodules/Postbox/Sources/Postbox.swift"
           if [ -f "$PATCH_FILE_PB" ]; then
-            grep -q "teleflow.antiDelete" "$PATCH_FILE_PB" || \
-            sed -i 's/fileprivate func deleteMessages(_ messageIds: \[MessageId\], forEachMedia: ((Media) -> Void)?) {/fileprivate func deleteMessages(_ messageIds: [MessageId], forEachMedia: ((Media) -> Void)?) {\n        if TeleFlowManager.shared.antiDelete {\n            for messageId in messageIds {\n                TeleFlowManager.shared.storeDeletedMessages([messageId], for: messageId.peerId)\n            }\n        }/' "$PATCH_FILE_PB"
+            if ! grep -q "teleflow.antiDelete" "$PATCH_FILE_PB"; then
+              perl -i -pe 's/fileprivate func deleteMessages\(_ messageIds: \[MessageId\], forEachMedia: \(\(Media\) -> Void\)\?\) \{/fileprivate func deleteMessages(_ messageIds: [MessageId], forEachMedia: ((Media) -> Void)?) {\n        if TeleFlowManager.shared.antiDelete {\n            for messageId in messageIds {\n                TeleFlowManager.shared.storeDeletedMessages([messageId], for: messageId.peerId)\n            }\n        }/' "$PATCH_FILE_PB"
+              echo "=== Патч антиудаления применён ==="
+            fi
           fi
 
-          echo "TeleFlow module created and patches applied."
+          echo "=== ГОТОВО ==="
 
       - name: Build the App
         run: |
