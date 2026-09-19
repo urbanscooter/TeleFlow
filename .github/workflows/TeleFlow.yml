@@ -134,7 +134,7 @@ jobs:
 
           echo "=== ГОТОВО ==="
 
-      - name: Build the App
+            - name: Build the App
         run: |
           set -x
           SOURCE_DIR=/Users/Shared/telegram-ios
@@ -148,6 +148,46 @@ jobs:
           export BUILD_NUMBER="$COMMIT_COUNT"
           echo "BUILD_NUMBER=$(echo $BUILD_NUMBER)" >> $GITHUB_ENV
           echo "APP_VERSION=$(echo $APP_VERSION)" >> $GITHUB_ENV
+
+          python3 - << 'PYEOF'
+          import json
+          path = "build-system/appstore-configuration.json"
+          with open(path) as f:
+              cfg = json.load(f)
+
+          # Добавляем sg_config, если его нет
+          if "sg_config" not in cfg:
+              # Берём значения из существующих полей конфига как основу
+              bundle_id = cfg.get("bundle_id", "com.teleflow.app")
+              app_name = cfg.get("app_name", "TeleFlow")
+              team_id = cfg.get("team_id", "")
+              url_scheme = cfg.get("url_scheme", "teleflow")
+
+              cfg["sg_config"] = {
+                  "bundle_id": bundle_id,
+                  "app_name": app_name,
+                  "url_scheme": url_scheme,
+                  "team_id": team_id,
+                  "app_group_id": "group." + bundle_id,
+                  "extension_bundle_suffix": ".Share",
+                  "watch_bundle_suffix": ".WatchApp",
+                  "widget_bundle_suffix": ".Widget",
+                  "notifications_bundle_suffix": ".NotificationService",
+                  "intents_bundle_suffix": ".Intents",
+                  "share_bundle_suffix": ".Share",
+              }
+
+              with open(path, "w") as f:
+                  json.dump(cfg, f, indent=2)
+
+              print("sg_config добавлен:")
+              print(json.dumps(cfg["sg_config"], indent=2))
+          else:
+              print("sg_config уже есть, пропускаем")
+
+          print("\nФинальный конфиг:")
+          print(json.dumps(cfg, indent=2))
+          PYEOF
 
           python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
 
@@ -166,7 +206,6 @@ jobs:
           for f in bazel-out/applebin_ios-ios_arm*-opt-ST-*/bin/Telegram/Telegram.ipa; do
             cp "$f" $OUTPUT_PATH/
           done
-
       - name: Create Release
         id: create_release
         uses: actions/create-release@v1
