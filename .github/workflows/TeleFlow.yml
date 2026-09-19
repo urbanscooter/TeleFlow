@@ -32,7 +32,6 @@ jobs:
           SOURCE_DIR=/Users/Shared/telegram-ios
           cd $SOURCE_DIR
 
-          # 1. Создаём структуру модуля
           mkdir -p TeleFlowModule/Sources
 
           cat > TeleFlowModule/BUILD << 'BUILDEOF'
@@ -91,11 +90,10 @@ jobs:
           }
           SWIFTEOF
 
-          echo "=== Файлы модуля созданы: ==="
+          echo "=== Файлы модуля созданы ==="
           ls -la TeleFlowModule/
           ls -la TeleFlowModule/Sources/
 
-          # 2. Ищем главный BUILD файл приложения (Telegram/BUILD)
           echo "=== Поиск главного BUILD ==="
           find . -maxdepth 2 -name "BUILD" -path "*Telegram*" 2>/dev/null | head -10
 
@@ -107,14 +105,11 @@ jobs:
 
           if [ -n "$MAIN_BUILD_FILE" ] && [ -f "$MAIN_BUILD_FILE" ]; then
             if ! grep -q "//TeleFlowModule:TeleFlow" "$MAIN_BUILD_FILE"; then
-              # Используем perl вместо sed — он одинаковый на macOS и Linux
               perl -i -pe 's/^(\s*)deps = \[/$1deps = [\n$1    "\/\/TeleFlowModule:TeleFlow",/' "$MAIN_BUILD_FILE"
-              echo "=== Модуль подключён к $MAIN_BUILD_FILE ==="
-              grep -A 5 "deps = \[" "$MAIN_BUILD_FILE" | head -10
+              echo "=== Модуль подключён ==="
             fi
           fi
 
-          # 3. Патч для скрытия рекламы (используем perl!)
           PATCH_FILE_AD="submodules/TelegramCore/Sources/TelegramEngine/Messages/AdMessages.swift"
           if [ -f "$PATCH_FILE_AD" ]; then
             if ! grep -q "teleflow.hideAds" "$PATCH_FILE_AD"; then
@@ -123,7 +118,6 @@ jobs:
             fi
           fi
 
-          # 4. Патч для антиудаления (используем perl!)
           PATCH_FILE_PB="submodules/Postbox/Sources/Postbox.swift"
           if [ -f "$PATCH_FILE_PB" ]; then
             if ! grep -q "teleflow.antiDelete" "$PATCH_FILE_PB"; then
@@ -134,7 +128,7 @@ jobs:
 
           echo "=== ГОТОВО ==="
 
-            - name: Build the App
+      - name: Build the App
         run: |
           set -x
           SOURCE_DIR=/Users/Shared/telegram-ios
@@ -155,9 +149,7 @@ jobs:
           with open(path) as f:
               cfg = json.load(f)
 
-          # Добавляем sg_config, если его нет
           if "sg_config" not in cfg:
-              # Берём значения из существующих полей конфига как основу
               bundle_id = cfg.get("bundle_id", "com.teleflow.app")
               app_name = cfg.get("app_name", "TeleFlow")
               team_id = cfg.get("team_id", "")
@@ -206,6 +198,7 @@ jobs:
           for f in bazel-out/applebin_ios-ios_arm*-opt-ST-*/bin/Telegram/Telegram.ipa; do
             cp "$f" $OUTPUT_PATH/
           done
+
       - name: Create Release
         id: create_release
         uses: actions/create-release@v1
