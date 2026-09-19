@@ -26,7 +26,7 @@ jobs:
           cp -R $GITHUB_WORKSPACE /Users/Shared/
           mv /Users/Shared/$(basename $GITHUB_WORKSPACE) /Users/Shared/telegram-ios
 
-            - name: Create TeleFlow Module and Apply Patches
+      - name: Create TeleFlow Module and Apply Patches
         run: |
           set -x
           SOURCE_DIR=/Users/Shared/telegram-ios
@@ -91,6 +91,8 @@ jobs:
           SWIFTEOF
 
           echo "=== Файлы модуля созданы ==="
+          ls -la TeleFlowModule/
+          ls -la TeleFlowModule/Sources/
 
           echo "=== Подключаем модуль к главному таргету Swiftgram ==="
           python3 - << 'PYEOF'
@@ -100,11 +102,8 @@ jobs:
           with open(build_file, "r") as f:
               content = f.read()
 
-          # Ищем блок таргета с name = "Swiftgram"
-          # Добавляем нашу зависимость в его deps
           lines = content.split("\n")
           target_start = None
-          target_end = None
 
           for i, line in enumerate(lines):
               if re.search(r'name\s*=\s*"Swiftgram"', line):
@@ -122,32 +121,32 @@ jobs:
               print("Не нашли главный таргет вообще")
               exit(1)
 
-          # Находим deps = [ после target_start
+          print("Нашли таргет на строке:", target_start)
+
           deps_line = None
           for j in range(target_start, len(lines)):
               if 'deps = [' in lines[j]:
                   deps_line = j
                   break
-              # если встретили закрывающую скобку раньше deps — выходим
               if lines[j].strip() == ')' and j > target_start:
                   break
 
           if deps_line is None:
-              print("Не нашли deps в таргете Swiftgram")
+              print("Не нашли deps в таргете")
               exit(1)
 
-          # Проверяем, что нашей зависимости ещё нет
+          print("Нашли deps на строке:", deps_line)
+
           if any('//TeleFlowModule:TeleFlow' in l for l in lines):
               print("Зависимость уже есть, пропускаем")
           else:
               lines.insert(deps_line + 1, '        "//TeleFlowModule:TeleFlow",')
               with open(build_file, "w") as f:
                   f.write("\n".join(lines))
-              print("Зависимость //TeleFlowModule:TeleFlow добавлена в таргет Swiftgram")
+              print("Зависимость добавлена")
 
-          # Показываем контекст
-          print("Контекст:")
-          for i in range(max(0, target_start-2), min(len(lines), target_start+30)):
+          print("=== Контекст Telegram/BUILD ===")
+          for i in range(max(0, target_start-2), min(len(lines), target_start+35)):
               print(lines[i])
           PYEOF
 
