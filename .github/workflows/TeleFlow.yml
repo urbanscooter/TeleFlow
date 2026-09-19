@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-13
+    runs-on: macos-26
 
     steps:
       - name: Checkout TeleFlow
@@ -14,10 +14,10 @@ jobs:
           submodules: 'recursive'
           fetch-depth: '0'
 
-      - name: Set active Xcode path
+      - name: Select Xcode 26.2
         run: |
-          XCODE_VERSION=$(cat versions.json | python3 -c 'import json,sys;obj=json.load(sys.stdin);print(obj["xcode"]);')
-          sudo xcode-select -s /Applications/Xcode_$XCODE_VERSION.app/Contents/Developer
+          sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
+          xcodebuild -version
 
       - name: Create canonical source directory
         run: |
@@ -32,11 +32,9 @@ jobs:
           SOURCE_DIR=/Users/Shared/telegram-ios
           cd $SOURCE_DIR
 
-          # 1. Создаём структуру модуля TeleFlow
           mkdir -p TeleFlowModule/Sources
-          
-          # 2. Создаём BUILD-файл для модуля (описание для Bazel)
-          cat > TeleFlowModule/BUILD << 'EOF'
+
+          cat > TeleFlowModule/BUILD << 'BUILDEOF'
           load("@build_bazel_rules_swift//swift:swift.bzl", "swift_library")
 
           swift_library(
@@ -50,10 +48,9 @@ jobs:
                   "//submodules/Postbox:Postbox",
               ],
           )
-          EOF
+          BUILDEOF
 
-          # 3. Создаём основной код модуля (Реализация функций)
-          cat > TeleFlowModule/Sources/TeleFlow.swift << 'EOF'
+          cat > TeleFlowModule/Sources/TeleFlow.swift << 'SWIFTEOF'
           import Foundation
           import TelegramCore
           import TelegramUI
@@ -63,7 +60,6 @@ jobs:
               public static let shared = TeleFlowManager()
               private init() {}
 
-              // Настройки (тумблеры)
               public var hideAds: Bool {
                   get { UserDefaults.standard.bool(forKey: "teleflow.hideAds") }
                   set { UserDefaults.standard.set(newValue, forKey: "teleflow.hideAds") }
@@ -77,9 +73,8 @@ jobs:
                   set { UserDefaults.standard.set(newValue, forKey: "teleflow.antiDelete") }
               }
 
-              // Логика Антиудаления (сохранение удалённых сообщений)
               private var deletedMessages: [String: [MessageId]] = [:]
-              
+
               public func storeDeletedMessages(_ messageIds: [MessageId], for peerId: PeerId) {
                   guard antiDelete else { return }
                   let key = "\(peerId.id._internalValue)"
@@ -87,39 +82,28 @@ jobs:
                   stored.append(contentsOf: messageIds)
                   deletedMessages[key] = stored
               }
-              
+
               public func getDeletedMessages(for peerId: PeerId) -> [MessageId] {
                   let key = "\(peerId.id._internalValue)"
                   return deletedMessages[key] ?? []
               }
           }
-          EOF
+          SWIFTEOF
 
-          # 4. Подключаем модуль к основному проекту (добавляем в deps)
-          # Ищем файл с определением основного таргета и добавляем зависимость
           MAIN_BUILD_FILE=$(grep -rl 'name = "Telegram"' --include="BUILD" . | head -1)
           if [ -n "$MAIN_BUILD_FILE" ]; then
-            # Добавляем зависимость после строки с "deps = ["
             sed -i '/deps = \[/a\        "//TeleFlowModule:TeleFlow",' "$MAIN_BUILD_FILE"
           fi
 
-          # 5. Применяем патчи для активации функций
-          
-          # Патч 1: Скрытие рекламы (в AdMessages.swift)
           PATCH_FILE_AD="submodules/TelegramCore/Sources/TelegramEngine/Messages/AdMessages.swift"
           if [ -f "$PATCH_FILE_AD" ]; then
-            # Добавляем проверку hideAds перед обработкой sponsoredMessages
+            grep -q "teleflow.hideAds" "$PATCH_FILE_AD" || \
             sed -i 's/let (postsBetween, startDelay, betweenDelay, messages, chats, users) = (sponsoredMessagesData.postsBetween, sponsoredMessagesData.startDelay, sponsoredMessagesData.betweenDelay, sponsoredMessagesData.messages, sponsoredMessagesData.chats, sponsoredMessagesData.users)/if TeleFlowManager.shared.hideAds { continue }\n                        let (postsBetween, startDelay, betweenDelay, messages, chats, users) = (sponsoredMessagesData.postsBetween, sponsoredMessagesData.startDelay, sponsoredMessagesData.betweenDelay, sponsoredMessagesData.messages, sponsoredMessagesData.chats, sponsoredMessagesData.users)/' "$PATCH_FILE_AD"
           fi
 
-          # Патч 2: Скрытие историй (пример, требует точного поиска файла)
-          # В реальном коде нужно найти место рендеринга панели историй и добавить проверку hideStories
-          # Например: если TeleFlowManager.shared.hideStories { return }
-          
-          # Патч 3: Антиудаление (в Postbox.swift)
           PATCH_FILE_PB="submodules/Postbox/Sources/Postbox.swift"
           if [ -f "$PATCH_FILE_PB" ]; then
-            # Добавляем сохранение ID сообщений перед удалением
+            grep -q "teleflow.antiDelete" "$PATCH_FILE_PB" || \
             sed -i 's/fileprivate func deleteMessages(_ messageIds: \[MessageId\], forEachMedia: ((Media) -> Void)?) {/fileprivate func deleteMessages(_ messageIds: [MessageId], forEachMedia: ((Media) -> Void)?) {\n        if TeleFlowManager.shared.antiDelete {\n            for messageId in messageIds {\n                TeleFlowManager.shared.storeDeletedMessages([messageId], for: messageId.peerId)\n            }\n        }/' "$PATCH_FILE_PB"
           fi
 
@@ -131,6 +115,7 @@ jobs:
           SOURCE_DIR=/Users/Shared/telegram-ios
           BAZEL_USER_ROOT="/private/var/tmp/_bazel_containerhost"
           cd $SOURCE_DIR
+
           BUILD_NUMBER_OFFSET="$(cat build_number_offset)"
           export APP_VERSION=$(cat versions.json | python3 -c 'import json,sys;obj=json.load(sys.stdin);print(obj["app"]);')
           export COMMIT_COUNT=$(git rev-list --count HEAD)
@@ -138,25 +123,24 @@ jobs:
           export BUILD_NUMBER="$COMMIT_COUNT"
           echo "BUILD_NUMBER=$(echo $BUILD_NUMBER)" >> $GITHUB_ENV
           echo "APP_VERSION=$(echo $APP_VERSION)" >> $GITHUB_ENV
+
           python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
+
           python3 -u build-system/Make/Make.py \
             --bazelUserRoot="$BAZEL_USER_ROOT" \
+            --overrideXcodeVersion \
             build \
             --configurationPath="build-system/appstore-configuration.json" \
             --codesigningInformationPath=build-system/fake-codesigning \
             --configuration=release_arm64 \
             --buildNumber="$BUILD_NUMBER"
+
           OUTPUT_PATH="build/artifacts"
           rm -rf "$OUTPUT_PATH"
           mkdir -p "$OUTPUT_PATH"
           for f in bazel-out/applebin_ios-ios_arm*-opt-ST-*/bin/Telegram/Telegram.ipa; do
             cp "$f" $OUTPUT_PATH/
           done
-          mkdir -p build/DSYMs
-          for f in bazel-out/applebin_ios-ios_arm*-opt-ST-*/bin/Telegram/*.dSYM; do
-            cp -R "$f" build/DSYMs/
-          done
-          zip -r "./$OUTPUT_PATH/Telegram.DSYMs.zip" build/DSYMs 1>/dev/null
 
       - name: Create Release
         id: create_release
@@ -179,14 +163,4 @@ jobs:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: /Users/Shared/telegram-ios/build/artifacts/Telegram.ipa
           asset_name: TeleFlow.ipa
-          asset_content_type: application/zip
-
-      - name: Upload Release DSYM
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: /Users/Shared/telegram-ios/build/artifacts/Telegram.DSYMs.zip
-          asset_name: TeleFlow.DSYMs.zip
           asset_content_type: application/zip
