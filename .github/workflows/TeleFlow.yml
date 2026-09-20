@@ -69,7 +69,6 @@ jobs:
 
           echo "=== Файлы модуля созданы ==="
 
-          # === Функция: добавить зависимость от TeleFlowModule в BUILD-файл ===
           add_dep_to_build() {
             local BUILD_FILE="$1"
             if [ ! -f "$BUILD_FILE" ]; then
@@ -78,17 +77,12 @@ jobs:
             fi
             python3 - "$BUILD_FILE" << 'PYEOF'
           import sys
-          import re
-
           path = sys.argv[1]
           with open(path, "r") as f:
               lines = f.read().split("\n")
-
           if any('//TeleFlowModule:TeleFlow' in l for l in lines):
               print(f"{path}: зависимость уже есть")
               sys.exit(0)
-
-          # Ищем первый deps = [
           inserted = False
           for i, line in enumerate(lines):
               if 'deps = [' in line:
@@ -96,29 +90,23 @@ jobs:
                   inserted = True
                   print(f"{path}: зависимость добавлена на строке {i+1}")
                   break
-
           if not inserted:
               print(f"{path}: не нашли deps = [")
               sys.exit(1)
-
           with open(path, "w") as f:
               f.write("\n".join(lines))
           PYEOF
           }
 
-          # Добавляем зависимость в Postbox и TelegramCore
           add_dep_to_build "submodules/Postbox/BUILD"
           add_dep_to_build "submodules/TelegramCore/BUILD"
 
-          # Добавляем зависимость в главный таргет Swiftgram
           python3 - << 'PYEOF'
           import re
-
           build_file = "Telegram/BUILD"
           with open(build_file, "r") as f:
               content = f.read()
           lines = content.split("\n")
-
           if any('//TeleFlowModule:TeleFlow' in l for l in lines):
               print("Telegram/BUILD: зависимость уже есть")
           else:
@@ -142,7 +130,6 @@ jobs:
                           break
           PYEOF
 
-          # === Патч Postbox.swift: добавляем import + проверку антиудаления ===
           POSTBOX_FILE="submodules/Postbox/Sources/Postbox.swift"
           if [ -f "$POSTBOX_FILE" ]; then
             if ! grep -q "^import TeleFlow" "$POSTBOX_FILE"; then
@@ -179,29 +166,21 @@ jobs:
               cfg = json.load(f)
 
           if "sg_config" not in cfg:
-              bundle_id = cfg.get("bundle_id", "com.teleflow.app")
-              app_name = cfg.get("app_name", "TeleFlow")
-              team_id = cfg.get("team_id", "")
-              url_scheme = cfg.get("url_scheme", "teleflow")
-
-              cfg["sg_config"] = {
-                  "bundle_id": bundle_id,
-                  "app_name": app_name,
-                  "url_scheme": url_scheme,
-                  "team_id": team_id,
-                  "app_group_id": "group." + bundle_id,
-                  "extension_bundle_suffix": ".Share",
-                  "watch_bundle_suffix": ".WatchApp",
-                  "widget_bundle_suffix": ".Widget",
-                  "notifications_bundle_suffix": ".NotificationService",
-                  "intents_bundle_suffix": ".Intents",
-                  "share_bundle_suffix": ".Share",
+              # sg_config ДОЛЖЕН быть строкой (JSON-строкой), не dict!
+              sg_branding = {
+                  "app_name": "TeleFlow",
+                  "bundle_id": cfg.get("bundle_id", "ph.telegra.Telegraph"),
+                  "app_specific_url_scheme": cfg.get("app_specific_url_scheme", "teleflow"),
+                  "premium_iap_product_id": cfg.get("premium_iap_product_id", ""),
               }
+              cfg["sg_config"] = json.dumps(sg_branding)
               with open(path, "w") as f:
                   json.dump(cfg, f, indent=2)
-              print("sg_config добавлен")
+              print("sg_config добавлен как строка:")
+              print(repr(cfg["sg_config"]))
           else:
-              print("sg_config уже есть")
+              print("sg_config уже есть, тип:", type(cfg["sg_config"]).__name__)
+              print(repr(cfg["sg_config"])[:200])
           PYEOF
 
           python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
