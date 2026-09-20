@@ -173,7 +173,7 @@ jobs:
                   "app_specific_url_scheme": cfg.get("app_specific_url_scheme", "teleflow"),
                   "premium_iap_product_id": cfg.get("premium_iap_product_id", ""),
               }
-              cfg["sg_config"] = json.dumps(sg_branding)
+              cfg["sg_config"] = json.dumps(sg_branding, separators=(',', ':'))
               with open(path, "w") as f:
                   json.dump(cfg, f, indent=2)
               print("sg_config добавлен как строка:")
