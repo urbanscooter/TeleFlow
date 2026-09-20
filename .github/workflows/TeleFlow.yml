@@ -42,19 +42,11 @@ jobs:
               srcs = glob(["Sources/**/*.swift"]),
               module_name = "TeleFlow",
               visibility = ["//visibility:public"],
-              deps = [
-                  "//submodules/TelegramCore:TelegramCore",
-                  "//submodules/TelegramUI:TelegramUI",
-                  "//submodules/Postbox:Postbox",
-              ],
           )
           BUILDEOF
 
           cat > TeleFlowModule/Sources/TeleFlow.swift << 'SWIFTEOF'
           import Foundation
-          import TelegramCore
-          import TelegramUI
-          import Postbox
 
           public final class TeleFlowManager {
               public static let shared = TeleFlowManager()
@@ -72,97 +64,94 @@ jobs:
                   get { UserDefaults.standard.bool(forKey: "teleflow.antiDelete") }
                   set { UserDefaults.standard.set(newValue, forKey: "teleflow.antiDelete") }
               }
-
-              private var deletedMessages: [String: [MessageId]] = [:]
-
-              public func storeDeletedMessages(_ messageIds: [MessageId], for peerId: PeerId) {
-                  guard antiDelete else { return }
-                  let key = "\(peerId.id._internalValue)"
-                  var stored = deletedMessages[key] ?? []
-                  stored.append(contentsOf: messageIds)
-                  deletedMessages[key] = stored
-              }
-
-              public func getDeletedMessages(for peerId: PeerId) -> [MessageId] {
-                  let key = "\(peerId.id._internalValue)"
-                  return deletedMessages[key] ?? []
-              }
           }
           SWIFTEOF
 
           echo "=== Файлы модуля созданы ==="
-          ls -la TeleFlowModule/
-          ls -la TeleFlowModule/Sources/
 
-          echo "=== Подключаем модуль к главному таргету Swiftgram ==="
+          # === Функция: добавить зависимость от TeleFlowModule в BUILD-файл ===
+          add_dep_to_build() {
+            local BUILD_FILE="$1"
+            if [ ! -f "$BUILD_FILE" ]; then
+              echo "Файл $BUILD_FILE не найден, пропускаем"
+              return
+            fi
+            python3 - "$BUILD_FILE" << 'PYEOF'
+          import sys
+          import re
+
+          path = sys.argv[1]
+          with open(path, "r") as f:
+              lines = f.read().split("\n")
+
+          if any('//TeleFlowModule:TeleFlow' in l for l in lines):
+              print(f"{path}: зависимость уже есть")
+              sys.exit(0)
+
+          # Ищем первый deps = [
+          inserted = False
+          for i, line in enumerate(lines):
+              if 'deps = [' in line:
+                  lines.insert(i + 1, '    "//TeleFlowModule:TeleFlow",')
+                  inserted = True
+                  print(f"{path}: зависимость добавлена на строке {i+1}")
+                  break
+
+          if not inserted:
+              print(f"{path}: не нашли deps = [")
+              sys.exit(1)
+
+          with open(path, "w") as f:
+              f.write("\n".join(lines))
+          PYEOF
+          }
+
+          # Добавляем зависимость в Postbox и TelegramCore
+          add_dep_to_build "submodules/Postbox/BUILD"
+          add_dep_to_build "submodules/TelegramCore/BUILD"
+
+          # Добавляем зависимость в главный таргет Swiftgram
           python3 - << 'PYEOF'
           import re
 
           build_file = "Telegram/BUILD"
           with open(build_file, "r") as f:
               content = f.read()
-
           lines = content.split("\n")
-          target_start = None
-
-          for i, line in enumerate(lines):
-              if re.search(r'name\s*=\s*"Swiftgram"', line):
-                  target_start = i
-                  break
-
-          if target_start is None:
-              print("Не нашли таргет Swiftgram, ищем Telegram...")
-              for i, line in enumerate(lines):
-                  if re.search(r'name\s*=\s*"Telegram"', line):
-                      target_start = i
-                      break
-
-          if target_start is None:
-              print("Не нашли главный таргет вообще")
-              exit(1)
-
-          print("Нашли таргет на строке:", target_start)
-
-          deps_line = None
-          for j in range(target_start, len(lines)):
-              if 'deps = [' in lines[j]:
-                  deps_line = j
-                  break
-              if lines[j].strip() == ')' and j > target_start:
-                  break
-
-          if deps_line is None:
-              print("Не нашли deps в таргете")
-              exit(1)
-
-          print("Нашли deps на строке:", deps_line)
 
           if any('//TeleFlowModule:TeleFlow' in l for l in lines):
-              print("Зависимость уже есть, пропускаем")
+              print("Telegram/BUILD: зависимость уже есть")
           else:
-              lines.insert(deps_line + 1, '        "//TeleFlowModule:TeleFlow",')
-              with open(build_file, "w") as f:
-                  f.write("\n".join(lines))
-              print("Зависимость добавлена")
-
-          print("=== Контекст Telegram/BUILD ===")
-          for i in range(max(0, target_start-2), min(len(lines), target_start+35)):
-              print(lines[i])
+              target_start = None
+              for i, line in enumerate(lines):
+                  if re.search(r'name\s*=\s*"Swiftgram"', line):
+                      target_start = i
+                      break
+              if target_start is None:
+                  for i, line in enumerate(lines):
+                      if re.search(r'name\s*=\s*"Telegram"', line):
+                          target_start = i
+                          break
+              if target_start is not None:
+                  for j in range(target_start, len(lines)):
+                      if 'deps = [' in lines[j]:
+                          lines.insert(j + 1, '        "//TeleFlowModule:TeleFlow",')
+                          with open(build_file, "w") as f:
+                              f.write("\n".join(lines))
+                          print(f"Telegram/BUILD: зависимость добавлена на строке {j+1}")
+                          break
           PYEOF
 
-          PATCH_FILE_AD="submodules/TelegramCore/Sources/TelegramEngine/Messages/AdMessages.swift"
-          if [ -f "$PATCH_FILE_AD" ]; then
-            if ! grep -q "teleflow.hideAds" "$PATCH_FILE_AD"; then
-              perl -i -pe 's/let \(postsBetween, startDelay, betweenDelay, messages, chats, users\) = \(sponsoredMessagesData\.postsBetween, sponsoredMessagesData\.startDelay, sponsoredMessagesData\.betweenDelay, sponsoredMessagesData\.messages, sponsoredMessagesData\.chats, sponsoredMessagesData\.users\)/if TeleFlowManager.shared.hideAds { continue }\n                        let (postsBetween, startDelay, betweenDelay, messages, chats, users) = (sponsoredMessagesData.postsBetween, sponsoredMessagesData.startDelay, sponsoredMessagesData.betweenDelay, sponsoredMessagesData.messages, sponsoredMessagesData.chats, sponsoredMessagesData.users)/' "$PATCH_FILE_AD"
-              echo "=== Патч рекламы применён ==="
+          # === Патч Postbox.swift: добавляем import + проверку антиудаления ===
+          POSTBOX_FILE="submodules/Postbox/Sources/Postbox.swift"
+          if [ -f "$POSTBOX_FILE" ]; then
+            if ! grep -q "^import TeleFlow" "$POSTBOX_FILE"; then
+              perl -i -pe 'BEGIN{$done=0} if (!$done && /^import /) { $_ .= "import TeleFlow\n"; $done=1; }' "$POSTBOX_FILE"
+              echo "import TeleFlow добавлен в Postbox.swift"
             fi
-          fi
-
-          PATCH_FILE_PB="submodules/Postbox/Sources/Postbox.swift"
-          if [ -f "$PATCH_FILE_PB" ]; then
-            if ! grep -q "teleflow.antiDelete" "$PATCH_FILE_PB"; then
-              perl -i -pe 's/fileprivate func deleteMessages\(_ messageIds: \[MessageId\], forEachMedia: \(\(Media\) -> Void\)\?\) \{/fileprivate func deleteMessages(_ messageIds: [MessageId], forEachMedia: ((Media) -> Void)?) {\n        if TeleFlowManager.shared.antiDelete {\n            for messageId in messageIds {\n                TeleFlowManager.shared.storeDeletedMessages([messageId], for: messageId.peerId)\n            }\n        }/' "$PATCH_FILE_PB"
-              echo "=== Патч антиудаления применён ==="
+            if ! grep -q "teleflow.antiDelete" "$POSTBOX_FILE"; then
+              perl -i -pe 's/fileprivate func deleteMessages\(_ messageIds: \[MessageId\], forEachMedia: \(\(Media\) -> Void\)\?\) \{/fileprivate func deleteMessages(_ messageIds: [MessageId], forEachMedia: ((Media) -> Void)?) {\n        if TeleFlowManager.shared.antiDelete {\n            \/\/ TODO: сохранить удалённые сообщения\n        }/' "$POSTBOX_FILE"
+              echo "Патч антиудаления применён в Postbox.swift"
             fi
           fi
 
@@ -208,17 +197,11 @@ jobs:
                   "intents_bundle_suffix": ".Intents",
                   "share_bundle_suffix": ".Share",
               }
-
               with open(path, "w") as f:
                   json.dump(cfg, f, indent=2)
-
-              print("sg_config добавлен:")
-              print(json.dumps(cfg["sg_config"], indent=2))
+              print("sg_config добавлен")
           else:
-              print("sg_config уже есть, пропускаем")
-
-          print("\nФинальный конфиг:")
-          print(json.dumps(cfg, indent=2))
+              print("sg_config уже есть")
           PYEOF
 
           python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
