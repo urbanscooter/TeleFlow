@@ -164,9 +164,7 @@ jobs:
           path = "build-system/appstore-configuration.json"
           with open(path) as f:
               cfg = json.load(f)
-
           if "sg_config" not in cfg:
-              # sg_config ДОЛЖЕН быть строкой (JSON-строкой), не dict!
               sg_branding = {
                   "app_name": "TeleFlow",
                   "bundle_id": cfg.get("bundle_id", "ph.telegra.Telegraph"),
@@ -176,11 +174,7 @@ jobs:
               cfg["sg_config"] = json.dumps(sg_branding, separators=(',', ':'))
               with open(path, "w") as f:
                   json.dump(cfg, f, indent=2)
-              print("sg_config добавлен как строка:")
-              print(repr(cfg["sg_config"]))
-          else:
-              print("sg_config уже есть, тип:", type(cfg["sg_config"]).__name__)
-              print(repr(cfg["sg_config"])[:200])
+              print("sg_config добавлен")
           PYEOF
 
           python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
@@ -194,12 +188,50 @@ jobs:
             --configuration=release_arm64 \
             --buildNumber="$BUILD_NUMBER"
 
+          echo "=== Ищем .ipa файлы в bazel-out ==="
+          find bazel-out -name "*.ipa" 2>/dev/null
+          echo "=== Ищем .app файлы в bazel-out ==="
+          find bazel-out -name "*.app" -type d -maxdepth 8 2>/dev/null | head -20
+
           OUTPUT_PATH="build/artifacts"
           rm -rf "$OUTPUT_PATH"
           mkdir -p "$OUTPUT_PATH"
-          for f in bazel-out/applebin_ios-ios_arm*-opt-ST-*/bin/Telegram/Telegram.ipa; do
-            cp "$f" $OUTPUT_PATH/
-          done
+
+          IPA_FOUND=0
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            cp "$f" "$OUTPUT_PATH/TeleFlow.ipa"
+            echo "Скопирован IPA: $f -> TeleFlow.ipa"
+            IPA_FOUND=1
+            break
+          done < <(find bazel-out -name "*.ipa" 2>/dev/null)
+
+          if [ "$IPA_FOUND" = "0" ]; then
+            echo "=== .ipa не найден, ищем .app ==="
+            APP_FOUND=""
+            while IFS= read -r f; do
+              [ -z "$f" ] && continue
+              APP_FOUND="$f"
+              break
+            done < <(find bazel-out -name "*.app" -type d 2>/dev/null)
+
+            if [ -n "$APP_FOUND" ]; then
+              echo "Найден .app: $APP_FOUND"
+              mkdir -p "$OUTPUT_PATH/Payload"
+              cp -R "$APP_FOUND" "$OUTPUT_PATH/Payload/"
+              cd "$OUTPUT_PATH"
+              zip -qry "TeleFlow.ipa" Payload
+              rm -rf Payload
+              cd "$SOURCE_DIR"
+              echo "Создан TeleFlow.ipa из .app"
+            else
+              echo "ОШИБКА: ни .ipa, ни .app не найдены"
+              exit 1
+            fi
+          fi
+
+          echo "=== Содержимое build/artifacts ==="
+          ls -la "$OUTPUT_PATH/"
 
       - name: Create Release
         id: create_release
@@ -220,6 +252,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: /Users/Shared/telegram-ios/build/artifacts/Telegram.ipa
+          asset_path: /Users/Shared/telegram-ios/build/artifacts/TeleFlow.ipa
           asset_name: TeleFlow.ipa
           asset_content_type: application/zip
