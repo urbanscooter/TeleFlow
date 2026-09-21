@@ -1,0 +1,247 @@
+name: Create TeleFlow Module Files
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout TeleFlow
+        uses: actions/checkout@v4
+
+      - name: Create TeleFlow Module Files
+        run: |
+          set -x
+          mkdir -p TeleFlowModule/Sources
+
+          # ===== BUILD =====
+          cat > TeleFlowModule/BUILD << 'BUILDEOF'
+          objc_library(
+              name = "TeleFlow",
+              srcs = glob([
+                  "Sources/*.swift",
+                  "Sources/*.m",
+              ]),
+              enable_modules = True,
+              module_name = "TeleFlow",
+              visibility = ["//visibility:public"],
+              sdk_frameworks = [
+                  "UIKit",
+                  "Foundation",
+              ],
+              uses_swift = True,
+          )
+          BUILDEOF
+
+          # ===== TeleFlowManager.swift =====
+          cat > TeleFlowModule/Sources/TeleFlowManager.swift << 'SWIFTEOF'
+          import Foundation
+
+          @objc public class TeleFlowManager: NSObject {
+              @objc public static let shared = TeleFlowManager()
+
+              private override init() {
+                  super.init()
+              }
+
+              @objc public var hideAds: Bool {
+                  get { UserDefaults.standard.bool(forKey: "teleflow.hideAds") }
+                  set { UserDefaults.standard.set(newValue, forKey: "teleflow.hideAds") }
+              }
+
+              @objc public var hideStories: Bool {
+                  get { UserDefaults.standard.bool(forKey: "teleflow.hideStories") }
+                  set { UserDefaults.standard.set(newValue, forKey: "teleflow.hideStories") }
+              }
+
+              @objc public var antiDelete: Bool {
+                  get { UserDefaults.standard.bool(forKey: "teleflow.antiDelete") }
+                  set { UserDefaults.standard.set(newValue, forKey: "teleflow.antiDelete") }
+              }
+          }
+          SWIFTEOF
+
+          # ===== TeleFlowSettingsScreen.swift =====
+          cat > TeleFlowModule/Sources/TeleFlowSettingsScreen.swift << 'SWIFTEOF'
+          import UIKit
+
+          @objc public class TeleFlowSettingsScreen: UIViewController, UITableViewDataSource, UITableViewDelegate {
+
+              private let tableView = UITableView(frame: .zero, style: .insetGrouped)
+              private let items: [(title: String, subtitle: String, key: String)] = [
+                  ("Скрытие рекламы", "Убирает sponsored messages", "hideAds"),
+                  ("Скрытие историй", "Убирает stories сверху", "hideStories"),
+                  ("Антиудаление", "Сохраняет удалённые сообщения", "antiDelete"),
+              ]
+
+              public override func viewDidLoad() {
+                  super.viewDidLoad()
+                  self.title = "TeleFlow"
+                  self.view.backgroundColor = .systemGroupedBackground
+
+                  tableView.dataSource = self
+                  tableView.delegate = self
+                  tableView.translatesAutoresizingMaskIntoConstraints = false
+                  self.view.addSubview(tableView)
+
+                  NSLayoutConstraint.activate([
+                      tableView.topAnchor.constraint(equalTo: self.view.topAnchor),
+                      tableView.bottomAnchor.constraint(equalTo: self.view.bottomAnchor),
+                      tableView.leadingAnchor.constraint(equalTo: self.view.leadingAnchor),
+                      tableView.trailingAnchor.constraint(equalTo: self.view.trailingAnchor),
+                  ])
+              }
+
+              public func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+                  return items.count
+              }
+
+              public func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+                  let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
+                  let item = items[indexPath.row]
+                  cell.textLabel?.text = item.title
+                  cell.detailTextLabel?.text = item.subtitle
+                  cell.selectionStyle = .none
+
+                  let sw = UISwitch()
+                  sw.tag = indexPath.row
+                  let m = TeleFlowManager.shared
+                  switch item.key {
+                  case "hideAds": sw.isOn = m.hideAds
+                  case "hideStories": sw.isOn = m.hideStories
+                  case "antiDelete": sw.isOn = m.antiDelete
+                  default: break
+                  }
+                  sw.addTarget(self, action: #selector(toggleChanged(_:)), for: .valueChanged)
+                  cell.accessoryView = sw
+                  return cell
+              }
+
+              @objc private func toggleChanged(_ sender: UISwitch) {
+                  let item = items[sender.tag]
+                  let m = TeleFlowManager.shared
+                  switch item.key {
+                  case "hideAds": m.hideAds = sender.isOn
+                  case "hideStories": m.hideStories = sender.isOn
+                  case "antiDelete": m.antiDelete = sender.isOn
+                  default: break
+                  }
+                  NSLog("[TeleFlow] %@ = %@", item.key, sender.isOn ? "ON" : "OFF")
+              }
+          }
+          SWIFTEOF
+
+          # ===== HideAds.swift =====
+          cat > TeleFlowModule/Sources/HideAds.swift << 'SWIFTEOF'
+          import Foundation
+
+          @objc public class TeleFlowHideAds: NSObject {
+              @objc public static func shouldHide() -> Bool {
+                  return TeleFlowManager.shared.hideAds
+              }
+          }
+          SWIFTEOF
+
+          # ===== HideStories.swift =====
+          cat > TeleFlowModule/Sources/HideStories.swift << 'SWIFTEOF'
+          import Foundation
+
+          @objc public class TeleFlowHideStories: NSObject {
+              @objc public static func shouldHide() -> Bool {
+                  return TeleFlowManager.shared.hideStories
+              }
+          }
+          SWIFTEOF
+
+          # ===== AntiDelete.swift =====
+          cat > TeleFlowModule/Sources/AntiDelete.swift << 'SWIFTEOF'
+          import Foundation
+
+          @objc public class TeleFlowAntiDelete: NSObject {
+              @objc public static func isEnabled() -> Bool {
+                  return TeleFlowManager.shared.antiDelete
+              }
+          }
+          SWIFTEOF
+
+          # ===== TeleFlowBootstrap.m =====
+          cat > TeleFlowModule/Sources/TeleFlowBootstrap.m << 'MEOF'
+          #import <UIKit/UIKit.h>
+          #import <objc/runtime.h>
+
+          __attribute__((constructor))
+          static void teleflow_setup(void) {
+              dispatch_async(dispatch_get_main_queue(), ^{
+                  Class cls = [UIViewController class];
+                  Method orig = class_getInstanceMethod(cls, @selector(viewDidLoad));
+                  Method swiz = class_getInstanceMethod(cls, @selector(teleflow_viewDidLoad));
+                  if (orig && swiz) {
+                      method_exchangeImplementations(orig, swiz);
+                      NSLog(@"[TeleFlow] viewDidLoad swizzled");
+                  }
+              });
+          }
+
+          @interface UIViewController (TeleFlowHook)
+          @end
+
+          @implementation UIViewController (TeleFlowHook)
+
+          - (void)teleflow_viewDidLoad {
+              [self teleflow_viewDidLoad];
+
+              NSString *name = NSStringFromClass([self class]);
+              if (![name containsString:@"Settings"]) return;
+              if (![name containsString:@"Controller"]) return;
+              if ([name containsString:@"TeleFlow"]) return;
+              if (self.navigationController == nil) return;
+
+              for (UIBarButtonItem *b in self.navigationItem.rightBarButtonItems) {
+                  if ([b.title isEqualToString:@"TeleFlow"]) return;
+              }
+
+              UIBarButtonItem *btn = [[UIBarButtonItem alloc] initWithTitle:@"TeleFlow"
+                                                                     style:UIBarButtonItemStylePlain
+                                                                    target:self
+                                                                    action:@selector(teleflow_openSettings)];
+              NSMutableArray *items = [NSMutableArray arrayWithArray:self.navigationItem.rightBarButtonItems ?: @[]];
+              [items insertObject:btn atIndex:0];
+              self.navigationItem.rightBarButtonItems = items;
+              NSLog(@"[TeleFlow] button injected into %@", name);
+          }
+
+          - (void)teleflow_openSettings {
+              Class cls = NSClassFromString(@"TeleFlow.TeleFlowSettingsScreen");
+              if (!cls) {
+                  NSLog(@"[TeleFlow] settings screen class not found");
+                  return;
+              }
+              UIViewController *vc = [[cls alloc] init];
+              [self.navigationController pushViewController:vc animated:YES];
+          }
+
+          @end
+          MEOF
+
+          echo "=== Файлы созданы ==="
+          find TeleFlowModule -type f | sort
+
+      - name: Commit and Push
+        run: |
+          set -x
+          git config user.name "TeleFlow Bot"
+          git config user.email "bot@teleflow.local"
+          git add TeleFlowModule/
+          git status
+          if git diff --cached --quiet; then
+            echo "Нечего коммитить — файлы уже есть"
+          else
+            git commit -m "Add TeleFlow module files"
+            git push
+            echo "=== Файлы закоммичены и запушены ==="
+          fi
