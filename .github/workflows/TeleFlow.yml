@@ -188,46 +188,31 @@ jobs:
             --configuration=release_arm64 \
             --buildNumber="$BUILD_NUMBER"
 
-          echo "=== Ищем .ipa файлы в bazel-out ==="
-          find bazel-out -name "*.ipa" 2>/dev/null
-          echo "=== Ищем .app файлы в bazel-out ==="
-          find bazel-out -name "*.app" -type d -maxdepth 8 2>/dev/null | head -20
+          echo "=== Содержимое bazel-bin/Telegram/ ==="
+          ls -la bazel-bin/Telegram/ 2>/dev/null | head -30
+
+          echo "=== Поиск .ipa через find -L bazel-bin ==="
+          find -L bazel-bin -maxdepth 4 -name "*.ipa" 2>/dev/null
 
           OUTPUT_PATH="build/artifacts"
           rm -rf "$OUTPUT_PATH"
           mkdir -p "$OUTPUT_PATH"
 
-          IPA_FOUND=0
-          while IFS= read -r f; do
-            [ -z "$f" ] && continue
-            cp "$f" "$OUTPUT_PATH/TeleFlow.ipa"
-            echo "Скопирован IPA: $f -> TeleFlow.ipa"
-            IPA_FOUND=1
-            break
-          done < <(find bazel-out -name "*.ipa" 2>/dev/null)
+          IPA_SRC=""
+          IPA_SRC=$(find -L bazel-bin -maxdepth 4 -name "*.ipa" 2>/dev/null | head -1)
 
-          if [ "$IPA_FOUND" = "0" ]; then
-            echo "=== .ipa не найден, ищем .app ==="
-            APP_FOUND=""
-            while IFS= read -r f; do
-              [ -z "$f" ] && continue
-              APP_FOUND="$f"
-              break
-            done < <(find bazel-out -name "*.app" -type d 2>/dev/null)
+          if [ -z "$IPA_SRC" ] && [ -f "bazel-bin/Telegram/Swiftgram.ipa" ]; then
+            IPA_SRC="bazel-bin/Telegram/Swiftgram.ipa"
+          fi
 
-            if [ -n "$APP_FOUND" ]; then
-              echo "Найден .app: $APP_FOUND"
-              mkdir -p "$OUTPUT_PATH/Payload"
-              cp -R "$APP_FOUND" "$OUTPUT_PATH/Payload/"
-              cd "$OUTPUT_PATH"
-              zip -qry "TeleFlow.ipa" Payload
-              rm -rf Payload
-              cd "$SOURCE_DIR"
-              echo "Создан TeleFlow.ipa из .app"
-            else
-              echo "ОШИБКА: ни .ipa, ни .app не найдены"
-              exit 1
-            fi
+          if [ -n "$IPA_SRC" ] && [ -f "$IPA_SRC" ]; then
+            cp "$IPA_SRC" "$OUTPUT_PATH/TeleFlow.ipa"
+            echo "=== Скопирован IPA: $IPA_SRC -> TeleFlow.ipa ==="
+          else
+            echo "=== ОШИБКА: .ipa не найден ==="
+            echo "=== Содержимое bazel-bin/Telegram/ ==="
+            ls -la bazel-bin/Telegram/ 2>/dev/null || echo "bazel-bin/Telegram не существует"
+            exit 1
           fi
 
           echo "=== Содержимое build/artifacts ==="
