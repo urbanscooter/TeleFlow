@@ -218,25 +218,10 @@ jobs:
           echo "=== Содержимое build/artifacts ==="
           ls -la "$OUTPUT_PATH/"
 
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload TeleFlow.ipa as artifact
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: build-${{ env.BUILD_NUMBER }}
-          release_name: TeleFlow ${{ env.APP_VERSION }} (${{ env.BUILD_NUMBER }})
-          body: |
-            An unsigned build of TeleFlow for iOS ${{ env.APP_VERSION }} (${{ env.BUILD_NUMBER }})
-          draft: false
-          prerelease: false
-
-      - name: Upload Release IPA
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: /Users/Shared/telegram-ios/build/artifacts/TeleFlow.ipa
-          asset_name: TeleFlow.ipa
-          asset_content_type: application/zip
+          name: TeleFlow.ipa
+          path: /Users/Shared/telegram-ios/build/artifacts/TeleFlow.ipa
+          if-no-files-found: error
+          retention-days: 90
