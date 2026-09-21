@@ -1,109 +1,388 @@
-name: Inspect Telegram iOS Structure
+name: TeleFlow Build
 
 on:
   workflow_dispatch:
 
 jobs:
-  inspect:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: macos-26
 
     steps:
-      - name: Checkout TeleFlow
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: 'recursive'
-          fetch-depth: '1'
+          fetch-depth: '0'
 
-      - name: Inspect structure
+      - name: Select Xcode 26.2
         run: |
-          set +e
-          echo ""
-          echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║  1. КЛАССЫ НАСТРОЕК (Settings Controllers)                  ║"
-          echo "╚══════════════════════════════════════════════════════════════╝"
-          find . -name "*.swift" 2>/dev/null | xargs grep -l "SettingsController\|SettingsScreen" 2>/dev/null | grep -i "settings" | head -30
-          echo ""
-          echo "--- Прямые объявления классов Settings ---"
-          grep -rn "^class.*Settings.*Controller\|^final class.*Settings.*Controller\|@objc.*class.*Settings.*Controller" --include="*.swift" . 2>/dev/null | head -20
-          echo ""
-          echo "--- SettingsItem / SettingsSection ---"
-          grep -rn "struct SettingsItem\|enum SettingsSection\|class SettingsController" --include="*.swift" . 2>/dev/null | head -20
+          sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
+          xcodebuild -version
 
-          echo ""
-          echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║  2. POSTBOX — функция удаления сообщений                    ║"
-          echo "╚══════════════════════════════════════════════════════════════╝"
-          echo ""
-          echo "--- BUILD-файл Postbox ---"
-          cat submodules/Postbox/BUILD 2>/dev/null | head -40
-          echo ""
-          echo "--- deleteMessages в Postbox.swift ---"
-          grep -n "func deleteMessages\|deleteMessages(" submodules/Postbox/Sources/Postbox.swift 2>/dev/null | head -20
-          echo ""
-          echo "--- MessageId структура ---"
-          grep -rn "public struct MessageId\|struct MessageId" --include="*.swift" submodules/Postbox/ 2>/dev/null | head -5
+      - name: Prepare source
+        run: |
+          set -x
+          sudo mkdir -p /Users/Shared
+          cp -R $GITHUB_WORKSPACE /Users/Shared/
+          mv /Users/Shared/$(basename $GITHUB_WORKSPACE) /Users/Shared/telegram-ios
 
-          echo ""
-          echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║  3. РЕКЛАМА (Sponsored Messages)                            ║"
-          echo "╚══════════════════════════════════════════════════════════════╝"
-          echo ""
-          echo "--- AdMessages.swift — где sponsoredMessages ---"
-          grep -n "sponsoredMessages\|sponsoredMessage\|isSponsored" submodules/TelegramCore/Sources/TelegramEngine/Messages/AdMessages.swift 2>/dev/null | head -30
-          echo ""
-          echo "--- BUILD-файл TelegramCore ---"
-          head -60 submodules/TelegramCore/BUILD 2>/dev/null
+      - name: Create TeleFlow module
+        run: |
+          set -x
+          cd /Users/Shared/telegram-ios
+          mkdir -p TeleFlowModule/Sources
 
-          echo ""
-          echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║  4. ИСТОРИИ (Stories)                                       ║"
-          echo "╚══════════════════════════════════════════════════════════════╝"
-          echo ""
-          echo "--- Файлы Stories ---"
-          find . -name "*Stories*.swift" 2>/dev/null | grep -v test | head -30
-          echo ""
-          echo "--- Классы с Stories ---"
-          grep -rn "class.*Stories.*Controller\|class.*Stories.*Screen\|class.*Stories.*Node" --include="*.swift" submodules/TelegramUI/ 2>/dev/null | head -20
-          echo ""
-          echo "--- Где отображается Stories panel в ChatList ---"
-          grep -rn "storiesPanel\|StoriesPanel\|storiesContainer" --include="*.swift" submodules/TelegramUI/ 2>/dev/null | head -15
+          cat > TeleFlowModule/BUILD << 'EOF'
+          load("@build_bazel_rules_swift//swift:swift.bzl", "swift_library")
 
-          echo ""
-          echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║  5. UI ЧАТА (для антиудаления + прозрачности)              ║"
-          echo "╚══════════════════════════════════════════════════════════════╝"
-          echo ""
-          echo "--- ChatMessageItemView / Cell ---"
-          find . -name "ChatMessageItem*.swift" 2>/dev/null | head -10
-          echo ""
-          echo "--- Классы с MessageBubble ---"
-          grep -rn "class.*MessageBubble\|class.*ChatMessageItemView" --include="*.swift" submodules/TelegramUI/ 2>/dev/null | head -15
+          swift_library(
+              name = "TeleFlow",
+              module_name = "TeleFlow",
+              srcs = glob(["Sources/**/*.swift", "Sources/**/*.m"]),
+              visibility = ["//visibility:public"],
+              deps = [
+                  "//submodules/Postbox:Postbox",
+                  "//submodules/TelegramCore:TelegramCore",
+              ],
+          )
+          EOF
 
-          echo ""
-          echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║  6. ГЛАВНЫЙ ТАРГЕТ (Telegram/BUILD)                        ║"
-          echo "╚══════════════════════════════════════════════════════════════╝"
-          echo ""
-          echo "--- Первые 100 строк Telegram/BUILD ---"
-          head -100 Telegram/BUILD 2>/dev/null
-          echo ""
-          echo "--- Таргет Swiftgram ---"
-          grep -n -A 5 "name = \"Swiftgram\"" Telegram/BUILD 2>/dev/null
+          # ===== TeleFlowManager.swift =====
+          cat > TeleFlowModule/Sources/TeleFlowManager.swift << 'EOF'
+          import Foundation
 
-          echo ""
-          echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║  7. УЖЕ СУЩЕСТВУЮЩИЕ МОДУЛИ Swiftgram (для примера)        ║"
-          echo "╚══════════════════════════════════════════════════════════════╝"
-          echo ""
-          find . -maxdepth 3 -type d -name "SG*" 2>/dev/null | head -30
-          echo ""
-          echo "--- SG-модули в submodules ---"
-          ls -d submodules/SG* 2>/dev/null
-          echo ""
-          echo "--- Swiftgram/BUILD файлы ---"
-          find . -path "*Swiftgram*BUILD" -o -path "*SGSettings*" 2>/dev/null | head -20
+          public final class TeleFlowManager {
+              public static let shared = TeleFlowManager()
+              private init() {}
 
-          echo ""
-          echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║  ГОТОВО                                                      ║"
-          echo "╚══════════════════════════════════════════════════════════════╝"
+              public var hideAds: Bool {
+                  get { UserDefaults.standard.bool(forKey: "teleflow.hideAds") }
+                  set { UserDefaults.standard.set(newValue, forKey: "teleflow.hideAds") }
+              }
+              public var hideStories: Bool {
+                  get { UserDefaults.standard.bool(forKey: "teleflow.hideStories") }
+                  set { UserDefaults.standard.set(newValue, forKey: "teleflow.hideStories") }
+              }
+              public var antiDelete: Bool {
+                  get { UserDefaults.standard.bool(forKey: "teleflow.antiDelete") }
+                  set { UserDefaults.standard.set(newValue, forKey: "teleflow.antiDelete") }
+              }
+
+              // Хранилище удалённых сообщений
+              public func storeDeletedMessage(key: String, text: String) {
+                  guard antiDelete else { return }
+                  var dict = (UserDefaults.standard.dictionary(forKey: "teleflow.deletedMessages") as? [String: String]) ?? [:]
+                  dict[key] = text
+                  UserDefaults.standard.set(dict, forKey: "teleflow.deletedMessages")
+              }
+
+              public func getDeletedMessage(key: String) -> String? {
+                  let dict = (UserDefaults.standard.dictionary(forKey: "teleflow.deletedMessages") as? [String: String]) ?? [:]
+                  return dict[key]
+              }
+          }
+          EOF
+
+          cat > TeleFlowModule/Sources/HideAds.swift << 'EOF'
+          import Foundation
+
+          public enum TeleFlowHideAds {
+              public static var enabled: Bool { return TeleFlowManager.shared.hideAds }
+          }
+          EOF
+
+          cat > TeleFlowModule/Sources/HideStories.swift << 'EOF'
+          import Foundation
+
+          public enum TeleFlowHideStories {
+              public static var enabled: Bool { return TeleFlowManager.shared.hideStories }
+          }
+          EOF
+
+          cat > TeleFlowModule/Sources/AntiDelete.swift << 'EOF'
+          import Foundation
+
+          public enum TeleFlowAntiDelete {
+              public static var enabled: Bool { return TeleFlowManager.shared.antiDelete }
+          }
+          EOF
+
+          # ===== Экран настроек TeleFlow =====
+          cat > TeleFlowModule/Sources/TeleFlowSettingsScreen.swift << 'EOF'
+          import UIKit
+
+          public final class TeleFlowSettingsScreen: UIViewController, UITableViewDataSource, UITableViewDelegate {
+
+              private let tableView = UITableView(frame: .zero, style: .insetGrouped)
+              private let items: [(title: String, subtitle: String, key: String)] = [
+                  ("Скрытие рекламы", "Убирает sponsored messages", "hideAds"),
+                  ("Скрытие историй", "Убирает stories", "hideStories"),
+                  ("Антиудаление", "Показывает удалённые (полупрозрачно + 🗑)", "antiDelete"),
+              ]
+
+              public override func viewDidLoad() {
+                  super.viewDidLoad()
+                  self.title = "TeleFlow"
+                  self.view.backgroundColor = .systemGroupedBackground
+
+                  tableView.dataSource = self
+                  tableView.delegate = self
+                  tableView.translatesAutoresizingMaskIntoConstraints = false
+                  self.view.addSubview(tableView)
+
+                  NSLayoutConstraint.activate([
+                      tableView.topAnchor.constraint(equalTo: self.view.topAnchor),
+                      tableView.bottomAnchor.constraint(equalTo: self.view.bottomAnchor),
+                      tableView.leadingAnchor.constraint(equalTo: self.view.leadingAnchor),
+                      tableView.trailingAnchor.constraint(equalTo: self.view.trailingAnchor),
+                  ])
+              }
+
+              public func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+                  return items.count
+              }
+
+              public func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+                  let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
+                  let item = items[indexPath.row]
+                  cell.textLabel?.text = item.title
+                  cell.detailTextLabel?.text = item.subtitle
+                  cell.selectionStyle = .none
+
+                  let sw = UISwitch()
+                  sw.tag = indexPath.row
+                  let m = TeleFlowManager.shared
+                  switch item.key {
+                  case "hideAds": sw.isOn = m.hideAds
+                  case "hideStories": sw.isOn = m.hideStories
+                  case "antiDelete": sw.isOn = m.antiDelete
+                  default: break
+                  }
+                  sw.addTarget(self, action: #selector(toggleChanged(_:)), for: .valueChanged)
+                  cell.accessoryView = sw
+                  return cell
+              }
+
+              @objc private func toggleChanged(_ sender: UISwitch) {
+                  let item = items[sender.tag]
+                  let m = TeleFlowManager.shared
+                  switch item.key {
+                  case "hideAds": m.hideAds = sender.isOn
+                  case "hideStories": m.hideStories = sender.isOn
+                  case "antiDelete": m.antiDelete = sender.isOn
+                  default: break
+                  }
+                  NSLog("[TeleFlow] %@ = %@", item.key, sender.isOn ? "ON" : "OFF")
+              }
+          }
+          EOF
+
+          # ===== Bootstrap: кнопка в официальных настройках Telegram =====
+          cat > TeleFlowModule/Sources/TeleFlowBootstrap.m << 'EOF'
+          #import <UIKit/UIKit.h>
+          #import <objc/runtime.h>
+
+          // Работаем ТОЛЬКО с официальным SettingsController из submodules/SettingsUI.
+          // Swiftgram-модули (SG*) НЕ ТРОГАЕМ.
+
+          __attribute__((constructor))
+          static void teleflow_setup(void) {
+              dispatch_async(dispatch_get_main_queue(), ^{
+                  Class cls = [UIViewController class];
+                  Method orig = class_getInstanceMethod(cls, @selector(viewDidLoad));
+                  Method swiz = class_getInstanceMethod(cls, @selector(teleflow_viewDidLoad));
+                  if (orig && swiz) {
+                      method_exchangeImplementations(orig, swiz);
+                      NSLog(@"[TeleFlow] viewDidLoad swizzled");
+                  }
+              });
+          }
+
+          @interface UIViewController (TeleFlowHook)
+          @end
+
+          @implementation UIViewController (TeleFlowHook)
+
+          - (void)teleflow_viewDidLoad {
+              [self teleflow_viewDidLoad];
+
+              NSString *name = NSStringFromClass([self class]);
+
+              // Отладка: логируем все Settings VC
+              if ([name containsString:@"Settings"]) {
+                  NSLog(@"[TeleFlow] Settings VC detected: %@", name);
+              }
+
+              // Только официальный SettingsController
+              BOOL isMainSettings = [name isEqualToString:@"SettingsController"]
+                  || [name isEqualToString:@"SettingsUI.SettingsController"];
+
+              if (!isMainSettings) return;
+              if (self.navigationController == nil) return;
+
+              for (UIBarButtonItem *b in self.navigationItem.rightBarButtonItems) {
+                  if ([b.title isEqualToString:@"TeleFlow"]) return;
+              }
+
+              UIBarButtonItem *btn = [[UIBarButtonItem alloc] initWithTitle:@"TeleFlow"
+                                                                     style:UIBarButtonItemStylePlain
+                                                                    target:self
+                                                                    action:@selector(teleflow_openSettings)];
+              NSMutableArray *items = [NSMutableArray arrayWithArray:self.navigationItem.rightBarButtonItems ?: @[]];
+              [items insertObject:btn atIndex:0];
+              self.navigationItem.rightBarButtonItems = items;
+              NSLog(@"[TeleFlow] button injected into %@", name);
+          }
+
+          - (void)teleflow_openSettings {
+              Class cls = NSClassFromString(@"TeleFlow.TeleFlowSettingsScreen");
+              if (!cls) cls = NSClassFromString(@"TeleFlowSettingsScreen");
+              if (!cls) {
+                  NSLog(@"[TeleFlow] settings screen class not found");
+                  return;
+              }
+              UIViewController *vc = [[cls alloc] init];
+              [self.navigationController pushViewController:vc animated:YES];
+          }
+
+          @end
+          EOF
+
+          echo "=== Модуль создан ==="
+          find TeleFlowModule -type f | sort
+
+      - name: Apply patches
+        run: |
+          set -x
+          cd /Users/Shared/telegram-ios
+
+          # Убираем Swiftgram remote_cache — наш мод не зависит от их кэша
+          sed -i.bak '/remote_cache_async/d' .bazelrc || true
+
+          # ===== Подключаем TeleFlow к официальным модулям =====
+          python3 - << 'PYEOF'
+          import os
+          os.chdir("/Users/Shared/telegram-ios")
+
+          def add_dep(path, indent="    "):
+              if not os.path.isfile(path):
+                  print(f"{path}: нет файла"); return
+              with open(path) as f:
+                  content = f.read()
+              if "//TeleFlowModule:TeleFlow" in content:
+                  print(f"{path}: уже есть"); return
+              lines = content.split("\n")
+              for i, line in enumerate(lines):
+                  if "deps = [" in line:
+                      lines.insert(i + 1, f'{indent}"//TeleFlowModule:TeleFlow",')
+                      with open(path, "w") as f:
+                          f.write("\n".join(lines))
+                      print(f"{path}: добавлено на строке {i+1}")
+                      return
+              print(f"{path}: deps = [ не найдено")
+
+          # Только официальные модули Telegram
+          add_dep("submodules/Postbox/BUILD")
+          add_dep("submodules/TelegramCore/BUILD")
+
+          # Главный таргет Swiftgram (это имя таргета в Telegram/BUILD — не путать с модом Swiftgram)
+          import re
+          bf = "Telegram/BUILD"
+          if os.path.isfile(bf):
+              with open(bf) as f:
+                  lines = f.read().split("\n")
+              if any("//TeleFlowModule:TeleFlow" in l for l in lines):
+                  print("Telegram/BUILD: уже есть")
+              else:
+                  start = None
+                  for i, line in enumerate(lines):
+                      if re.search(r'name\s*=\s*"Swiftgram"', line):
+                          start = i; break
+                  if start is not None:
+                      for j in range(start, len(lines)):
+                          if "deps = [" in lines[j]:
+                              lines.insert(j + 1, '        "//TeleFlowModule:TeleFlow",')
+                              with open(bf, "w") as f:
+                                  f.write("\n".join(lines))
+                              print(f"Telegram/BUILD: добавлено на строке {j+1}")
+                              break
+          PYEOF
+
+          # ===== Патч Postbox.swift =====
+          PB="submodules/Postbox/Sources/Postbox.swift"
+          if [ -f "$PB" ]; then
+            grep -q "^import TeleFlow" "$PB" || \
+              perl -i -pe 'BEGIN{$d=0} if (!$d && /^import /) { $_ .= "import TeleFlow\n"; $d=1; }' "$PB"
+            grep -q "TeleFlowAntiDelete" "$PB" || \
+              perl -i -pe 's/(fileprivate func deleteMessages\(_ messageIds: \[MessageId\], forEachMedia: \(\(Media\) -> Void\)\?\) \{)/$1\n        if TeleFlowAntiDelete.enabled {\n            for mid in messageIds {\n                TeleFlowManager.shared.storeDeletedMessage(key: "\\(mid.peerId):\\(mid.id)", text: "[deleted]")\n            }\n            NSLog("[TeleFlow] antiDelete stored \\(messageIds.count) messages")\n        }/' "$PB"
+          fi
+
+          # ===== Патч AdMessages.swift =====
+          AD="submodules/TelegramCore/Sources/TelegramEngine/Messages/AdMessages.swift"
+          if [ -f "$AD" ]; then
+            grep -q "^import TeleFlow" "$AD" || \
+              perl -i -pe 'BEGIN{$d=0} if (!$d && /^import /) { $_ .= "import TeleFlow\n"; $d=1; }' "$AD"
+            grep -q "TeleFlowHideAds" "$AD" || \
+              perl -i -pe 's/(case let \.sponsoredMessages\(sponsoredMessagesData\):)/$1\n                        if TeleFlowHideAds.enabled { continue }/' "$AD"
+          fi
+
+          echo "=== Патчи применены ==="
+
+      - name: Build
+        run: |
+          set -x
+          cd /Users/Shared/telegram-ios
+
+          BUILD_NUMBER_OFFSET="$(cat build_number_offset)"
+          export APP_VERSION=$(cat versions.json | python3 -c 'import json,sys;obj=json.load(sys.stdin);print(obj["app"]);')
+          export COMMIT_COUNT=$(git rev-list --count HEAD)
+          COMMIT_COUNT="$(($COMMIT_COUNT+$BUILD_NUMBER_OFFSET))"
+          export BUILD_NUMBER="$COMMIT_COUNT"
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
+          echo "APP_VERSION=$APP_VERSION" >> $GITHUB_ENV
+
+          python3 - << 'PYEOF'
+          import json
+          p = "build-system/appstore-configuration.json"
+          with open(p) as f: cfg = json.load(f)
+          cfg["api_id"] = 34110126
+          cfg["api_hash"] = "2a324d77253e0bab36705e1d2404bcef"
+          if "sg_config" not in cfg:
+              sg = {
+                  "app_name": "TeleFlow",
+                  "bundle_id": cfg.get("bundle_id", "ph.telegra.Telegraph"),
+                  "app_specific_url_scheme": cfg.get("app_specific_url_scheme", "teleflow"),
+                  "premium_iap_product_id": cfg.get("premium_iap_product_id", ""),
+              }
+              cfg["sg_config"] = json.dumps(sg, separators=(',', ':'))
+          with open(p, "w") as f: json.dump(cfg, f, indent=2)
+          PYEOF
+
+          python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
+
+          python3 -u build-system/Make/Make.py \
+            --bazelUserRoot="/private/var/tmp/_bazel_containerhost" \
+            --overrideXcodeVersion \
+            build \
+            --configurationPath="build-system/appstore-configuration.json" \
+            --codesigningInformationPath=build-system/fake-codesigning \
+            --configuration=release_arm64 \
+            --buildNumber="$BUILD_NUMBER"
+
+          OUT="build/artifacts"
+          rm -rf "$OUT"; mkdir -p "$OUT"
+          IPA=$(find -L bazel-bin -maxdepth 4 -name "*.ipa" 2>/dev/null | head -1)
+          [ -z "$IPA" ] && [ -f "bazel-bin/Telegram/Swiftgram.ipa" ] && IPA="bazel-bin/Telegram/Swiftgram.ipa"
+          if [ -n "$IPA" ] && [ -f "$IPA" ]; then
+            cp "$IPA" "$OUT/TeleFlow.ipa"
+            echo "=== OK: TeleFlow.ipa ==="
+          else
+            echo "=== ОШИБКА ==="; exit 1
+          fi
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: TeleFlow.ipa
+          path: /Users/Shared/telegram-ios/build/artifacts/TeleFlow.ipa
+          retention-days: 90
