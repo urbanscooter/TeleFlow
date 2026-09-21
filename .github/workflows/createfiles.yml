@@ -33,17 +33,17 @@ jobs:
           mkdir -p TeleFlowModule/Sources
 
           cat > TeleFlowModule/BUILD << 'EOF'
-          load("@build_bazel_rules_swift//swift:swift.bzl", "swift_library")
-
-          swift_library(
+          objc_library(
               name = "TeleFlow",
+              srcs = glob(["Sources/*.swift", "Sources/*.m"]),
+              enable_modules = True,
               module_name = "TeleFlow",
-              srcs = glob(["Sources/**/*.swift", "Sources/**/*.m"]),
               visibility = ["//visibility:public"],
-              deps = [
-                  "//submodules/Postbox:Postbox",
-                  "//submodules/TelegramCore:TelegramCore",
+              sdk_frameworks = [
+                  "UIKit",
+                  "Foundation",
               ],
+              uses_swift = True,
           )
           EOF
 
@@ -68,7 +68,6 @@ jobs:
                   set { UserDefaults.standard.set(newValue, forKey: "teleflow.antiDelete") }
               }
 
-              // Хранилище удалённых сообщений
               public func storeDeletedMessage(key: String, text: String) {
                   guard antiDelete else { return }
                   var dict = (UserDefaults.standard.dictionary(forKey: "teleflow.deletedMessages") as? [String: String]) ?? [:]
@@ -107,7 +106,6 @@ jobs:
           }
           EOF
 
-          # ===== Экран настроек TeleFlow =====
           cat > TeleFlowModule/Sources/TeleFlowSettingsScreen.swift << 'EOF'
           import UIKit
 
@@ -177,13 +175,9 @@ jobs:
           }
           EOF
 
-          # ===== Bootstrap: кнопка в официальных настройках Telegram =====
           cat > TeleFlowModule/Sources/TeleFlowBootstrap.m << 'EOF'
           #import <UIKit/UIKit.h>
           #import <objc/runtime.h>
-
-          // Работаем ТОЛЬКО с официальным SettingsController из submodules/SettingsUI.
-          // Swiftgram-модули (SG*) НЕ ТРОГАЕМ.
 
           __attribute__((constructor))
           static void teleflow_setup(void) {
@@ -208,12 +202,10 @@ jobs:
 
               NSString *name = NSStringFromClass([self class]);
 
-              // Отладка: логируем все Settings VC
               if ([name containsString:@"Settings"]) {
                   NSLog(@"[TeleFlow] Settings VC detected: %@", name);
               }
 
-              // Только официальный SettingsController
               BOOL isMainSettings = [name isEqualToString:@"SettingsController"]
                   || [name isEqualToString:@"SettingsUI.SettingsController"];
 
@@ -256,10 +248,8 @@ jobs:
           set -x
           cd /Users/Shared/telegram-ios
 
-          # Убираем Swiftgram remote_cache — наш мод не зависит от их кэша
           sed -i.bak '/remote_cache_async/d' .bazelrc || true
 
-          # ===== Подключаем TeleFlow к официальным модулям =====
           python3 - << 'PYEOF'
           import os
           os.chdir("/Users/Shared/telegram-ios")
@@ -281,11 +271,9 @@ jobs:
                       return
               print(f"{path}: deps = [ не найдено")
 
-          # Только официальные модули Telegram
           add_dep("submodules/Postbox/BUILD")
           add_dep("submodules/TelegramCore/BUILD")
 
-          # Главный таргет Swiftgram (это имя таргета в Telegram/BUILD — не путать с модом Swiftgram)
           import re
           bf = "Telegram/BUILD"
           if os.path.isfile(bf):
@@ -308,7 +296,6 @@ jobs:
                               break
           PYEOF
 
-          # ===== Патч Postbox.swift =====
           PB="submodules/Postbox/Sources/Postbox.swift"
           if [ -f "$PB" ]; then
             grep -q "^import TeleFlow" "$PB" || \
@@ -317,7 +304,6 @@ jobs:
               perl -i -pe 's/(fileprivate func deleteMessages\(_ messageIds: \[MessageId\], forEachMedia: \(\(Media\) -> Void\)\?\) \{)/$1\n        if TeleFlowAntiDelete.enabled {\n            for mid in messageIds {\n                TeleFlowManager.shared.storeDeletedMessage(key: "\\(mid.peerId):\\(mid.id)", text: "[deleted]")\n            }\n            NSLog("[TeleFlow] antiDelete stored \\(messageIds.count) messages")\n        }/' "$PB"
           fi
 
-          # ===== Патч AdMessages.swift =====
           AD="submodules/TelegramCore/Sources/TelegramEngine/Messages/AdMessages.swift"
           if [ -f "$AD" ]; then
             grep -q "^import TeleFlow" "$AD" || \
