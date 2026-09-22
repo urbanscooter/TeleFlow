@@ -33,21 +33,28 @@ jobs:
           mkdir -p TeleFlowModule/Sources
 
           cat > TeleFlowModule/BUILD << 'EOF'
-          objc_library(
+          load("@build_bazel_rules_swift//swift:swift.bzl", "swift_library")
+
+          swift_library(
               name = "TeleFlow",
-              srcs = glob(["Sources/*.swift", "Sources/*.m"]),
-              enable_modules = True,
               module_name = "TeleFlow",
+              srcs = glob(["Sources/*.swift"]),
+              visibility = ["//visibility:public"],
+          )
+
+          objc_library(
+              name = "TeleFlowBootstrap",
+              srcs = glob(["Sources/*.m"]),
+              enable_modules = True,
               visibility = ["//visibility:public"],
               sdk_frameworks = [
                   "UIKit",
                   "Foundation",
               ],
-              uses_swift = True,
+              deps = [":TeleFlow"],
           )
           EOF
 
-          # ===== TeleFlowManager.swift =====
           cat > TeleFlowModule/Sources/TeleFlowManager.swift << 'EOF'
           import Foundation
 
@@ -251,7 +258,7 @@ jobs:
           sed -i.bak '/remote_cache_async/d' .bazelrc || true
 
           python3 - << 'PYEOF'
-          import os
+          import os, re
           os.chdir("/Users/Shared/telegram-ios")
 
           def add_dep(path, indent="    "):
@@ -274,13 +281,12 @@ jobs:
           add_dep("submodules/Postbox/BUILD")
           add_dep("submodules/TelegramCore/BUILD")
 
-          import re
           bf = "Telegram/BUILD"
           if os.path.isfile(bf):
               with open(bf) as f:
                   lines = f.read().split("\n")
-              if any("//TeleFlowModule:TeleFlow" in l for l in lines):
-                  print("Telegram/BUILD: уже есть")
+              if "//TeleFlowModule:TeleFlowBootstrap" in "\n".join(lines):
+                  print("Telegram/BUILD: bootstrap уже есть")
               else:
                   start = None
                   for i, line in enumerate(lines):
@@ -289,10 +295,11 @@ jobs:
                   if start is not None:
                       for j in range(start, len(lines)):
                           if "deps = [" in lines[j]:
+                              lines.insert(j + 1, '        "//TeleFlowModule:TeleFlowBootstrap",')
                               lines.insert(j + 1, '        "//TeleFlowModule:TeleFlow",')
                               with open(bf, "w") as f:
                                   f.write("\n".join(lines))
-                              print(f"Telegram/BUILD: добавлено на строке {j+1}")
+                              print(f"Telegram/BUILD: добавлено TeleFlow + Bootstrap на строке {j+1}")
                               break
           PYEOF
 
